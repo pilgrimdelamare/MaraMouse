@@ -1,0 +1,7 @@
+# mediapipe DEVE essere <0.10.20: dalle release recenti (es. 0.10.35) Google ha
+# rimosso le legacy mp.solutions.hands, lasciando solo la Tasks API che su CPU
+# non rileva la mano in modo affidabile. La 0.10.14 ha ancora mp.solutions.hands.
+mediapipe==0.10.14
+opencv-python>=4.8.0
+pynput>=1.7.6
+numpy>=1.24.0

@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Artefatti runtime
+hand_landmarker.task
+diag_frames/
+*.lnk
