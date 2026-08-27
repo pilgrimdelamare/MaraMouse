@@ -83,7 +83,7 @@ In the preview window:
 - **`q`** quit
 - **`1` / `2`** switch webcam source
 
-**First run:** it starts in `STANDBY`. Show your hand (you'll hear a tone), then **make a fist and hold it ~1s** until the bar fills and you hear the rising beep: now you're `ACTIVE`.
+**First run:** it starts in `STANDBY`. Show your hand (you'll hear a whoosh), then **make a fist and hold it ~1s** until the bar fills and you hear the engage whoosh: now you're `ACTIVE`.
 
 ### 🖱️ Desktop shortcut (with icon)
 
@@ -119,12 +119,12 @@ MaraMouse/
 ├── MaraMouse.bat         # launcher (double-click)
 ├── Crea-Collegamento.ps1 # creates the desktop shortcut with icon
 ├── assets/               # logo (png/ico)
-├── main.py               # main loop, preview/HUD, beeps
+├── main.py               # main loop, preview/HUD, sounds
 ├── camera.py             # video source (threaded reader)
 ├── hand_tracker.py       # MediaPipe wrapper (mp.solutions.hands)
 ├── gesture_classifier.py # geometric rules on landmarks
 ├── state_machine.py      # gesture arbitration, clutch, engagement
-├── actions.py            # pynput + beeps (winsound)
+├── actions.py            # pynput + whoosh sounds (winsound)
 ├── config.py             # all tunable thresholds
 ├── diag.py               # diagnostics
 └── requirements.txt

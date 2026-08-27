@@ -83,7 +83,7 @@ Nella finestra di anteprima:
 - **`q`** esce
 - **`1` / `2`** cambia sorgente webcam
 
-**Primo avvio:** al lancio è in `STANDBY`. Mostra la mano (senti un tono), poi **chiudi il pugno e tienilo ~1s** finché la barretta si riempie e senti il bip ascendente: ora sei `ACTIVE`.
+**Primo avvio:** al lancio è in `STANDBY`. Mostra la mano (senti un woosh), poi **chiudi il pugno e tienilo ~1s** finché la barretta si riempie e senti il woosh di aggancio: ora sei `ACTIVE`.
 
 ### 🖱️ Collegamento sul desktop (con icona)
 
@@ -119,12 +119,12 @@ MaraMouse/
 ├── MaraMouse.bat         # launcher (doppio click)
 ├── Crea-Collegamento.ps1 # crea il collegamento sul desktop con icona
 ├── assets/               # logo (png/ico)
-├── main.py               # loop principale, preview/HUD, bip
+├── main.py               # loop principale, preview/HUD, suoni
 ├── camera.py             # sorgente video (lettore threaded)
 ├── hand_tracker.py       # wrapper MediaPipe (mp.solutions.hands)
 ├── gesture_classifier.py # regole geometriche sui landmark
 ├── state_machine.py      # arbitraggio gesti, clutch, aggancio
-├── actions.py            # pynput + bip (winsound)
+├── actions.py            # pynput + suoni woosh (winsound)
 ├── config.py             # tutte le soglie tarabili
 ├── diag.py               # diagnostica
 └── requirements.txt
