@@ -46,13 +46,13 @@ All gestures work only when the system is **engaged** (see [Engagement](#-engage
 
 ## 🔊 Engagement & audio feedback
 
-The system starts in **standby** and won't touch the mouse: you can move around freely. Three distinct sounds tell you what's happening:
+The system starts in **standby** and won't touch the mouse: you can move around freely. Three distinct *whooshes* tell you what's happening:
 
 | Sound | Meaning |
 |:--|:--|
-| 🔵 Single tone | Hand detected while in standby |
-| 🔼 Two **rising** tones | **Engaged** — hold a fist for ~1s |
-| 🔽 Two **falling** tones | Back to **standby** (after ~45s of inactivity) |
+| 🔵 Detection whoosh | Hand detected while in standby |
+| 🔼 **Engage** whoosh | **Engaged** — hold a fist for ~1s |
+| 🔽 **Disengage** whoosh | Back to **standby** (after ~45s of inactivity) |
 
 This prevents the cursor from taking off every time you move without meaning to control the PC.
 

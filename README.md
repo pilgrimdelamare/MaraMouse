@@ -46,13 +46,13 @@ Tutti i gesti funzionano solo quando il sistema è **agganciato** (vedi [Agganci
 
 ## 🔊 Aggancio e feedback audio
 
-Il sistema parte in **standby** e non tocca il mouse: puoi muoverti liberamente. Tre suoni distinti ti dicono cosa sta succedendo:
+Il sistema parte in **standby** e non tocca il mouse: puoi muoverti liberamente. Tre *woosh* distinti ti dicono cosa sta succedendo:
 
 | Suono | Significato |
 |:--|:--|
-| 🔵 Tono singolo | Mano rilevata mentre sei in standby |
-| 🔼 Due toni **ascendenti** | **Agganciato** — tieni il pugno chiuso ~1s |
-| 🔽 Due toni **discendenti** | Tornato in **standby** (dopo ~45s di inattività) |
+| 🔵 Woosh di rilevamento | Mano rilevata mentre sei in standby |
+| 🔼 Woosh di **aggancio** | **Agganciato** — tieni il pugno chiuso ~1s |
+| 🔽 Woosh di **sgancio** | Tornato in **standby** (dopo ~45s di inattività) |
 
 Questo evita che il cursore parta da solo ogni volta che ti muovi senza intenzione di controllare il PC.
 

@@ -1,6 +1,6 @@
-"""Azioni OS-level via pynput: mouse e tastiera."""
+"""Azioni OS-level via pynput: mouse e tastiera, piu' i suoni di stato."""
 
-import threading
+import os
 
 from pynput.mouse import Controller as MouseController, Button
 from pynput.keyboard import Controller as KeyboardController, Key
@@ -14,32 +14,33 @@ except ImportError:
 mouse = MouseController()
 keyboard = KeyboardController()
 
+_SOUND_DIR = os.path.join(os.path.dirname(__file__), "assets", "sounds")
 
-def _beep_seq(tones):
-    """Suona una sequenza di toni (freq, durata_ms) in un thread separato."""
+
+def _play(filename):
+    """Riproduce un .wav in modo asincrono (non blocca il loop di tracking)."""
     if winsound is None:
         return
-
-    def play():
-        for freq, dur in tones:
-            winsound.Beep(freq, dur)
-
-    threading.Thread(target=play, daemon=True).start()
+    path = os.path.join(_SOUND_DIR, filename)
+    if os.path.exists(path):
+        winsound.PlaySound(
+            path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
+        )
 
 
 def beep_hand():
-    """Mano rilevata in standby: singolo tono medio."""
-    _beep_seq([(800, 90)])
+    """Mano rilevata in standby."""
+    _play("hand.wav")
 
 
 def beep_engage():
-    """Tracking agganciato: due toni ascendenti."""
-    _beep_seq([(1000, 90), (1500, 110)])
+    """Tracking agganciato."""
+    _play("engage.wav")
 
 
 def beep_disengage():
-    """Tornato in standby: due toni discendenti."""
-    _beep_seq([(800, 90), (450, 150)])
+    """Tornato in standby."""
+    _play("disengage.wav")
 
 
 def move_cursor(dx, dy):
