@@ -34,7 +34,7 @@ CLICK_COOLDOWN_FRAMES = 5
 # Angolo morto in radianti (~8.5 gradi): sotto questa inclinazione niente scroll.
 SCROLL_TILT_DEAD_ZONE = 0.15
 # Moltiplicatore inclinazione -> velocita' scroll
-SCROLL_TILT_SENSITIVITY = 15.0
+SCROLL_TILT_SENSITIVITY = 3.0
 
 # --- Zoom (pinch) ---
 # Distanza normalizzata min/max tra pollice e indice (range per il VALORE zoom)

@@ -33,6 +33,8 @@ class GestureState:
         # --- Click (alzata dito) ---
         self.click_cooldown = 0      # frame di cooldown dopo un click
         self.prev_fingers = None     # stato dita frame precedente
+        self.pending_click = None    # "left" | "right" | None: attesa conferma doppio click
+        self.pending_click_timer = 0 # frame rimasti prima di scattare il click pendente
 
         # --- Scroll (inclinazione mano) ---
         self.scroll_base_angle = None  # angolo neutro quando si entra in scroll
@@ -198,32 +200,66 @@ class StateMachine:
         """Rileva quando un dito passa da chiuso a esteso (alzata).
 
         - Solo indice alza -> click sinistro
-        - Indice + medio alzano insieme -> doppio click
+        - Indice + medio alzano insieme (entro 2 frame) -> doppio click
         - Solo medio alza -> click destro
 
-        Le altre dita (anulare, mignolo) devono restare chiuse per evitare
-        falsi positivi durante la transizione pugno -> mano aperta (MOVE).
+        Se 3+ dita si alzano nello stesso frame, e' la transizione
+        pugno -> mano aperta (MOVE): non e' un click.
         """
-        if s.click_cooldown > 0 or current_fingers is None or s.prev_fingers is None:
+        if current_fingers is None or s.prev_fingers is None:
+            # Tick pending anche senza dita (la mano potrebbe sparire)
+            self._tick_pending_click(s, actions)
+            return
+
+        if s.click_cooldown > 0:
+            self._tick_pending_click(s, actions)
             return
 
         idx_rose = current_fingers["index"] and not s.prev_fingers["index"]
         mid_rose = current_fingers["middle"] and not s.prev_fingers["middle"]
-        ring_down = not current_fingers["ring"]
-        pinky_down = not current_fingers["pinky"]
+        ring_rose = current_fingers["ring"] and not s.prev_fingers["ring"]
+        pinky_rose = current_fingers["pinky"] and not s.prev_fingers["pinky"]
 
-        if not (ring_down and pinky_down):
+        total_rose = sum([idx_rose, mid_rose, ring_rose, pinky_rose])
+        if total_rose > 2:
+            # Troppe dita insieme: transizione a mano aperta, non un click
+            s.pending_click = None
             return
 
         if idx_rose and mid_rose:
+            # Entrambi nello stesso frame -> doppio click
             actions["double_click"] = True
             s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
-        elif idx_rose and not current_fingers["middle"]:
-            actions["left_click"] = True
+            s.pending_click = None
+        elif s.pending_click == "left" and mid_rose:
+            # Medio si alza subito dopo indice -> doppio click
+            actions["double_click"] = True
             s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
+            s.pending_click = None
+        elif idx_rose and not current_fingers["middle"]:
+            # Indice alzato, medio giu -> pending click sinistro (attende 2 frame)
+            s.pending_click = "left"
+            s.pending_click_timer = 2
         elif mid_rose and not current_fingers["index"]:
+            # Medio alzato, indice giu -> click destro (senza pending)
             actions["right_click"] = True
             s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
+            s.pending_click = None
+        else:
+            self._tick_pending_click(s, actions)
+
+    def _tick_pending_click(self, s, actions):
+        """Processa il timer del click pendente."""
+        if s.pending_click is None:
+            return
+        s.pending_click_timer -= 1
+        if s.pending_click_timer <= 0:
+            if s.pending_click == "left":
+                actions["left_click"] = True
+            elif s.pending_click == "right":
+                actions["right_click"] = True
+            s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
+            s.pending_click = None
 
     def _exit_state(self, old_gesture):
         """Reset stato specifico quando si esce da un gesto."""
