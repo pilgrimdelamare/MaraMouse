@@ -36,11 +36,12 @@ All gestures work only when the system is **engaged** (see [Engagement](#-engage
 | Gesture | Action |
 |:--|:--|
 | ✋ **Open hand** moving | Move the cursor |
-| ✊ **Fist** | Pause / lift-off (reposition your hand) — and engages from standby |
-| ☝️ **Index finger**, quick down-up tap | Left click |
-| ☝️☝️ **Two taps** of the index finger | Double click |
-| 🖕 **Middle finger**, down-up tap | Right click |
-| ✌️ **Peace sign** (index+middle) moved | Vertical / horizontal scroll |
+| ✊ **Fist** | Pause / lift-off (reposition your hand) |
+| 🤙 **Phone sign** (thumb+pinky) ~1s | Toggle engage / standby |
+| ☝️ **Index raised** from fist | Left click |
+| ☝️☝️ **Index+middle raised** together | Double click |
+| 🖕 **Middle raised** alone | Right click |
+| 🖐️ **3 fingers** (I+M+R) + hand tilt | Vertical scroll (joystick) |
 | 🤏 **Pinch** thumb-index | Zoom in / out |
 | 🤘 **Horns** (index+pinky) | Toggle dictation (Win+H) |
 
@@ -51,8 +52,8 @@ The system starts in **standby** and won't touch the mouse: you can move around 
 | Sound | Meaning |
 |:--|:--|
 | 🔵 Detection whoosh | Hand detected while in standby |
-| 🔼 **Engage** whoosh | **Engaged** — hold a fist for ~1s |
-| 🔽 **Disengage** whoosh | Back to **standby** (after ~45s of inactivity) |
+| 🔼 **Engage** beep | **Engaged** — hold the phone sign ~1s |
+| 🔽 **Disengage** whoosh | Back to **standby** (after ~45s of inactivity, or phone sign ~1s) |
 
 This prevents the cursor from taking off every time you move without meaning to control the PC.
 
@@ -83,7 +84,7 @@ In the preview window:
 - **`q`** quit
 - **`1` / `2`** switch webcam source
 
-**First run:** it starts in `STANDBY`. Show your hand (you'll hear a whoosh), then **make a fist and hold it ~1s** until the bar fills and you hear the engage whoosh: now you're `ACTIVE`.
+**First run:** it starts in `STANDBY`. Show your hand (you'll hear a whoosh), then make the **phone sign** (thumb+pinky extended, other fingers closed) **and hold it ~1s** until the bar fills and you hear the engage beep: now you're `ACTIVE`. To go back to standby, hold the same sign again ~1s.
 
 ### 🖱️ Desktop shortcut (with icon)
 
@@ -101,13 +102,13 @@ It creates `MaraMouse.lnk` on the desktop, pointing to `MaraMouse.bat` with the 
 flowchart LR
     A[📷 Webcam] --> B[MediaPipe<br/>21 landmarks]
     B --> C[Rule-based<br/>classifier]
-    C --> D[State machine<br/>clutch · debounce · axis-lock]
+    C --> D[State machine<br/>clutch · debounce · tilt]
     D --> E[🖱️ pynput<br/>mouse/keyboard]
 ```
 
 - **Tracking** — MediaPipe Hand Landmarker extracts 21 hand points per frame.
 - **Classification** — geometric rules on the landmarks decide the gesture (no neural network to train).
-- **State machine** — arbitrates between gestures with anti-false-positive debounce, handles the movement clutch, scroll axis-lock, tap detection and double click, engagement and inactivity timeout.
+- **State machine** — arbitrates between gestures with anti-false-positive debounce, handles the movement clutch, finger-rise click detection, tilt-based scroll, engagement and inactivity timeout.
 - **Actions** — pynput injects mouse and keyboard events at the OS level.
 
 A **threaded** webcam reader drops stale frames to avoid accumulating latency.
@@ -137,11 +138,11 @@ All knobs live in [`config.py`](config.py):
 | Area | Parameters |
 |:--|:--|
 | Cursor | `CURSOR_SENSITIVITY`, `CURSOR_SMOOTHING` |
-| Click | `CLICK_TAP_THRESHOLD`, `CLICK_TAP_RELEASE`, `DOUBLE_CLICK_WINDOW_FRAMES` |
-| Scroll | `SCROLL_SENSITIVITY`, `SCROLL_DEAD_ZONE`, `SCROLL_AXIS_LOCK_FRAMES` |
+| Click | `CLICK_COOLDOWN_FRAMES` |
+| Scroll | `SCROLL_TILT_DEAD_ZONE`, `SCROLL_TILT_SENSITIVITY` |
 | Zoom | `PINCH_ACTIVATE_DISTANCE`, `PINCH_MIN/MAX_DISTANCE` |
 | Dictation | `DICTATION_HOLD_FRAMES` |
-| Engagement | `ENGAGE_HOLD_FRAMES`, `INACTIVITY_TIMEOUT_FRAMES` |
+| Engagement | `ENGAGE_HOLD_FRAMES`, `ENGAGE_COOLDOWN_FRAMES`, `INACTIVITY_TIMEOUT_FRAMES` |
 
 ## 🛠️ Troubleshooting
 
@@ -149,7 +150,7 @@ All knobs live in [`config.py`](config.py):
 |:--|:--|
 | Hand not detected (0%) | Check `mediapipe==0.10.14` (`pip show mediapipe`). Newer versions don't work on CPU |
 | Jittery tracking | Improve lighting, avoid backlight, keep the hand well framed |
-| Cursor won't move | You're in standby: hold a fist ~1s to engage |
+| Cursor won't move | You're in standby: hold the phone sign (thumb+pinky) ~1s to engage |
 | Diagnostics | `python diag.py` reports detection %, hand size and brightness |
 
 ## 📋 Requirements

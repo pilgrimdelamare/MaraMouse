@@ -36,11 +36,12 @@ Tutti i gesti funzionano solo quando il sistema è **agganciato** (vedi [Agganci
 | Gesto | Azione |
 |:--|:--|
 | ✋ **Mano aperta** in movimento | Muove il cursore |
-| ✊ **Pugno chiuso** | Pausa / stacco (riposiziona la mano) — e aggancia dallo standby |
-| ☝️ **Indice**, colpetto giù-su | Click sinistro |
-| ☝️☝️ **Due colpetti** dell'indice | Doppio click |
-| 🖕 **Medio**, colpetto giù-su | Click destro |
-| ✌️ **Pace** (indice+medio) mosso | Scroll verticale / orizzontale |
+| ✊ **Pugno chiuso** | Pausa / stacco (riposiziona la mano) |
+| 🤙 **Segno del telefono** (pollice+mignolo) ~1s | Toggle aggancio / standby |
+| ☝️ **Indice alzato** dal pugno | Click sinistro |
+| ☝️☝️ **Indice+medio alzati** insieme | Doppio click |
+| 🖕 **Medio alzato** da solo | Click destro |
+| 🖐️ **3 dita** (I+M+R) + inclinazione mano | Scroll verticale (joystick) |
 | 🤏 **Pinch** pollice-indice | Zoom in / out |
 | 🤘 **Corna** (indice+mignolo) | Toggle dettatura (Win+H) |
 
@@ -51,8 +52,8 @@ Il sistema parte in **standby** e non tocca il mouse: puoi muoverti liberamente.
 | Suono | Significato |
 |:--|:--|
 | 🔵 Woosh di rilevamento | Mano rilevata mentre sei in standby |
-| 🔼 Woosh di **aggancio** | **Agganciato** — tieni il pugno chiuso ~1s |
-| 🔽 Woosh di **sgancio** | Tornato in **standby** (dopo ~45s di inattività) |
+| 🔼 Bip di **aggancio** | **Agganciato** — tieni il segno del telefono ~1s |
+| 🔽 Woosh di **sgancio** | Tornato in **standby** (dopo ~45s di inattività, o segno del telefono ~1s) |
 
 Questo evita che il cursore parta da solo ogni volta che ti muovi senza intenzione di controllare il PC.
 
@@ -83,7 +84,7 @@ Nella finestra di anteprima:
 - **`q`** esce
 - **`1` / `2`** cambia sorgente webcam
 
-**Primo avvio:** al lancio è in `STANDBY`. Mostra la mano (senti un woosh), poi **chiudi il pugno e tienilo ~1s** finché la barretta si riempie e senti il woosh di aggancio: ora sei `ACTIVE`.
+**Primo avvio:** al lancio è in `STANDBY`. Mostra la mano (senti un woosh), poi fai il **segno del telefono** (pollice+mignolo estesi, altre dita chiuse) **e tienilo ~1s** finché la barretta si riempie e senti il bip di aggancio: ora sei `ACTIVE`. Per tornare in standby, rifai lo stesso segno ~1s.
 
 ### 🖱️ Collegamento sul desktop (con icona)
 
@@ -101,13 +102,13 @@ Crea `MaraMouse.lnk` sul desktop, che punta a `MaraMouse.bat` con l'icona `asset
 flowchart LR
     A[📷 Webcam] --> B[MediaPipe<br/>21 landmark]
     B --> C[Classificatore<br/>rule-based]
-    C --> D[Macchina a stati<br/>clutch · debounce · axis-lock]
+    C --> D[Macchina a stati<br/>clutch · debounce · tilt]
     D --> E[🖱️ pynput<br/>mouse/tastiera]
 ```
 
 - **Tracking** — MediaPipe Hand Landmarker estrae 21 punti della mano da ogni frame.
 - **Classificazione** — regole geometriche sui landmark decidono il gesto (niente rete neurale da addestrare).
-- **Macchina a stati** — arbitra tra i gesti con debounce anti-falsi-positivi, gestisce il clutch del movimento, l'axis-lock dello scroll, il rilevamento del tap e il doppio click, l'aggancio e il timeout di inattività.
+- **Macchina a stati** — arbitra tra i gesti con debounce anti-falsi-positivi, gestisce il clutch del movimento, il click per alzata dito, lo scroll per inclinazione mano, l'aggancio e il timeout di inattività.
 - **Azioni** — pynput inietta gli eventi di mouse e tastiera a livello OS.
 
 Un **lettore threaded** della webcam scarta i frame vecchi per evitare l'accumulo di ritardo.
@@ -137,11 +138,11 @@ Tutte le manopole sono in [`config.py`](config.py):
 | Ambito | Parametri |
 |:--|:--|
 | Cursore | `CURSOR_SENSITIVITY`, `CURSOR_SMOOTHING` |
-| Click | `CLICK_TAP_THRESHOLD`, `CLICK_TAP_RELEASE`, `DOUBLE_CLICK_WINDOW_FRAMES` |
-| Scroll | `SCROLL_SENSITIVITY`, `SCROLL_DEAD_ZONE`, `SCROLL_AXIS_LOCK_FRAMES` |
+| Click | `CLICK_COOLDOWN_FRAMES` |
+| Scroll | `SCROLL_TILT_DEAD_ZONE`, `SCROLL_TILT_SENSITIVITY` |
 | Zoom | `PINCH_ACTIVATE_DISTANCE`, `PINCH_MIN/MAX_DISTANCE` |
 | Dettatura | `DICTATION_HOLD_FRAMES` |
-| Aggancio | `ENGAGE_HOLD_FRAMES`, `INACTIVITY_TIMEOUT_FRAMES` |
+| Aggancio | `ENGAGE_HOLD_FRAMES`, `ENGAGE_COOLDOWN_FRAMES`, `INACTIVITY_TIMEOUT_FRAMES` |
 
 ## 🛠️ Troubleshooting
 
@@ -149,7 +150,7 @@ Tutte le manopole sono in [`config.py`](config.py):
 |:--|:--|
 | Non rileva la mano (0%) | Verifica `mediapipe==0.10.14` (`pip show mediapipe`). Le versioni recenti non funzionano su CPU |
 | Il tracking è a scatti | Migliora l'illuminazione ed evita il controluce; tieni la mano ben inquadrata |
-| Il cursore non si muove | Sei in standby: chiudi il pugno ~1s per agganciare |
+| Il cursore non si muove | Sei in standby: fai il segno del telefono (pollice+mignolo) ~1s per agganciare |
 | Diagnostica | `python diag.py` misura % di rilevamento, dimensione della mano e luminosità |
 
 ## 📋 Requisiti
