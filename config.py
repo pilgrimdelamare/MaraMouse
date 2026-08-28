@@ -10,12 +10,12 @@ CAMERA_FPS = 30
 
 # --- MediaPipe Hand Landmarker ---
 MAX_HANDS = 1
-MIN_DETECTION_CONFIDENCE = 0.5
-MIN_TRACKING_CONFIDENCE = 0.5
+MIN_DETECTION_CONFIDENCE = 0.35
+MIN_TRACKING_CONFIDENCE = 0.35
 
 # --- Movimento cursore (clutch relativo) ---
 # Moltiplicatore di sensibilita: delta landmark -> pixel cursore
-CURSOR_SENSITIVITY = 1500.0
+CURSOR_SENSITIVITY = 4500.0
 # Smoothing esponenziale (0 = nessuno, 1 = massimo). Basso = piu' reattivo
 # ma piu' tremolio; alto = fluido ma con ritardo. A ~10 fps meglio tenerlo basso.
 CURSOR_SMOOTHING = 0.25
@@ -54,7 +54,7 @@ PINCH_MAX_DISTANCE = 0.20
 PINCH_ACTIVATE_DISTANCE = 0.07
 
 # --- Aggancio globale (engage/standby) ---
-# Frame di pugno tenuto per agganciare il tracking dallo standby (~1s a 10 fps)
+# Frame di gesto "telefono" tenuto per toggle engage/standby (~1s a 10 fps)
 ENGAGE_HOLD_FRAMES = 10
 # Frame senza alcuna azione prima di tornare in standby (~45s a 10 fps)
 INACTIVITY_TIMEOUT_FRAMES = 450

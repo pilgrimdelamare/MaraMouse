@@ -231,15 +231,15 @@ def _draw_hud(frame, gesture, state, extra):
         cv2.putText(frame, "STANDBY", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         # Progresso aggancio (pugno tenuto)
-        if gesture == Gesture.DISENGAGE and state.engage_hold > 0:
+        if gesture == Gesture.PHONE and state.engage_hold > 0:
             progress = state.engage_hold / config.ENGAGE_HOLD_FRAMES
             bar_w = int(min(progress, 1.0) * 200)
             cv2.rectangle(frame, (10, h - 30), (10 + bar_w, h - 10), (0, 200, 0), -1)
             cv2.rectangle(frame, (10, h - 30), (210, h - 10), (255, 255, 255), 1)
-            cv2.putText(frame, "AGGANCIO... (pugno)", (10, 60),
+            cv2.putText(frame, "AGGANCIO... (telefono)", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
         else:
-            cv2.putText(frame, "chiudi il pugno per agganciare", (10, 60),
+            cv2.putText(frame, "segno telefono per agganciare", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         return
 

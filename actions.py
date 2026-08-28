@@ -34,8 +34,9 @@ def beep_hand():
 
 
 def beep_engage():
-    """Tracking agganciato."""
-    _play("engage.wav")
+    """Tracking agganciato — bip sintetico breve."""
+    if winsound is not None:
+        winsound.Beep(900, 150)
 
 
 def beep_disengage():

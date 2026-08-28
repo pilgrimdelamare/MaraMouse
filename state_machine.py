@@ -133,9 +133,9 @@ class StateMachine:
         s.gesture_frames += 1
 
         # --- Aggancio globale (engage/standby) ---
-        # In standby il sistema ignora tutto tranne il pugno tenuto, che aggancia.
+        # In standby il sistema ignora tutto tranne il gesto "telefono" tenuto.
         if not s.engaged:
-            if gesture == Gesture.DISENGAGE:
+            if gesture == Gesture.PHONE:
                 s.engage_hold += 1
                 if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
                     s.engaged = True
@@ -180,6 +180,16 @@ class StateMachine:
         elif gesture == Gesture.DISENGAGE:
             pass  # pugno = pausa/clutch: nessuna azione (il movimento e' sospeso)
 
+        elif gesture == Gesture.PHONE:
+            # Gesto "telefono" tenuto -> torna in standby
+            s.engage_hold += 1
+            if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
+                s.engaged = False
+                s.engage_hold = 0
+                s.inactivity = 0
+                actions["engage_event"] = "off"
+                return actions
+
         elif gesture == Gesture.DICTATION:
             actions["dictation_toggle"] = self._handle_dictation()
 
@@ -216,6 +226,8 @@ class StateMachine:
             s.index_armed = False
             s.middle_tap_base = None
             s.middle_armed = False
+        elif old_gesture == Gesture.PHONE:
+            s.engage_hold = 0
         elif old_gesture == Gesture.DICTATION:
             s.dictation_frames = 0
 

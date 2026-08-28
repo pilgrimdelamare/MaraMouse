@@ -27,6 +27,7 @@ class Gesture(Enum):
     SCROLL = auto()          # Pace (V) -> scroll
     PINCH_ZOOM = auto()      # Pinch pollice-indice -> zoom
     DISENGAGE = auto()       # Pugno chiuso -> pausa / clutch up
+    PHONE = auto()           # Segno del telefono (pollice+mignolo) -> toggle standby
     DICTATION = auto()       # Corna (indice+mignolo)
 
 
@@ -156,6 +157,13 @@ def classify(landmarks, pinch_min=0.03, pinch_max=0.20, pinch_activate=None):
             pinch_value = np.interp(pinch_dist, [pinch_min, pinch_max], [0.0, 1.0])
             extra["pinch_value"] = float(np.clip(pinch_value, 0.0, 1.0))
             return Gesture.PINCH_ZOOM, extra
+
+    # --- Telefono: pollice + mignolo estesi, indice + medio + anulare chiusi ---
+    # Toggle engage/standby. Controllato PRIMA delle corna perche' le corna
+    # richiedono indice esteso, mentre telefono richiede indice chiuso.
+    if fingers["thumb"] and fingers["pinky"] and not fingers["index"] \
+       and not fingers["middle"] and not fingers["ring"]:
+        return Gesture.PHONE, extra
 
     # --- Corna: indice + mignolo estesi, medio + anulare chiusi -> dettatura ---
     # (il pollice e' ignorato: il suo stato e' troppo ambiguo da rilevare)
