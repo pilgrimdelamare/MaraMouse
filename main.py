@@ -247,11 +247,6 @@ def _draw_hud(frame, gesture, state, extra):
     cv2.putText(frame, f"ACTIVE  {gesture.name}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-    # Scroll axis
-    if state.scroll_axis:
-        cv2.putText(frame, f"SCROLL: {state.scroll_axis.upper()}", (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 0), 2)
-
     # Pinch value
     pinch = extra.get("pinch_value")
     if pinch is not None:

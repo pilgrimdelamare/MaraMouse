@@ -1,14 +1,14 @@
 """Macchina a stati centrale MaraMouse.
 
-Arbitra tra i 7 gesti, gestisce:
+Arbitra tra i gesti, gestisce:
 - Clutch relativo per il movimento cursore (pen-up/pen-down, rif: Air Canvas)
-- Axis-lock per lo scroll
+- Click per alzata dito (indice = sinistro, indice+medio = doppio, medio = destro)
+- Scroll per inclinazione mano (3 dita + tilt, tipo joystick)
 - Debounce anti-falsi-positivi
-- Rilevamento posa mantenuta nel tempo per disimpegno
 - Smoothing cursore esponenziale (rif: eviacam/tracky-mouse)
 """
 
-from collections import deque
+import math
 
 import numpy as np
 
@@ -30,26 +30,21 @@ class GestureState:
         self.smooth_dy = 0.0         # delta smoothed Y
         self.is_clutched = False     # True = pugno agganciato, cursore si muove
 
-        # --- Click (tap verticale della punta) ---
+        # --- Click (alzata dito) ---
         self.click_cooldown = 0      # frame di cooldown dopo un click
-        self.frames_since_left_click = 10000  # per rilevare il doppio click
-        self.index_tap_base = None   # profondita' minima recente (dito a riposo)
-        self.index_armed = False     # tap "caricato": punta scesa, attende risalita
-        self.middle_tap_base = None
-        self.middle_armed = False
+        self.prev_fingers = None     # stato dita frame precedente
 
-        # --- Scroll axis-lock ---
-        self.scroll_axis = None      # "v" o "h", None = non ancora deciso
-        self.scroll_deltas = deque(maxlen=config.SCROLL_AXIS_LOCK_FRAMES)
-        self.prev_scroll_pos = None
-        self.scroll_accum = 0.0      # accumulatore per non perdere i movimenti piccoli
+        # --- Scroll (inclinazione mano) ---
+        self.scroll_base_angle = None  # angolo neutro quando si entra in scroll
+        self.scroll_accum = 0.0        # accumulatore per movimenti frazionali
 
         # --- Pinch zoom ---
         self.prev_pinch_value = None
 
         # --- Aggancio globale (engage/standby) ---
         self.engaged = False         # False = standby, non tocca il mouse
-        self.engage_hold = 0         # frame di pugno tenuto per agganciare
+        self.engage_hold = 0         # frame di gesto telefono tenuto
+        self.engage_cooldown = 0     # cooldown dopo engage/disengage
         self.inactivity = 0          # frame senza azioni (per auto-standby)
         self.hand_present = False    # mano nell'inquadratura nel frame precedente
 
@@ -71,15 +66,7 @@ class StateMachine:
         """Aggiorna la macchina a stati con il gesto classificato.
 
         Returns:
-            dict con le azioni da eseguire:
-            {
-                "move": (dx, dy) | None,
-                "left_click": bool,
-                "right_click": bool,
-                "scroll": (sx, sy) | None,
-                "zoom": float | None,  # delta zoom
-                "dictation_toggle": bool,
-            }
+            dict con le azioni da eseguire.
         """
         actions = {
             "move": None,
@@ -89,7 +76,7 @@ class StateMachine:
             "scroll": None,
             "zoom": None,
             "dictation_toggle": False,
-            "engage_event": None,   # "on" | "off" quando cambia l'aggancio
+            "engage_event": None,   # "on" | "off" | "hand"
         }
 
         s = self.state
@@ -99,9 +86,11 @@ class StateMachine:
             s.click_cooldown -= 1
         if s.dictation_cooldown > 0:
             s.dictation_cooldown -= 1
-        # Tempo dall'ultimo click sinistro (per il doppio click)
-        if s.frames_since_left_click < 10000:
-            s.frames_since_left_click += 1
+        if s.engage_cooldown > 0:
+            s.engage_cooldown -= 1
+
+        # Stato dita corrente (per rilevare alzate)
+        current_fingers = extra.get("fingers")
 
         # Bip quando la mano compare nell'inquadratura mentre si e' in standby
         hand_now = landmarks is not None
@@ -133,18 +122,24 @@ class StateMachine:
         s.gesture_frames += 1
 
         # --- Aggancio globale (engage/standby) ---
-        # In standby il sistema ignora tutto tranne il gesto "telefono" tenuto.
         if not s.engaged:
-            if gesture == Gesture.PHONE:
+            if gesture == Gesture.PHONE and s.engage_cooldown <= 0:
                 s.engage_hold += 1
                 if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
                     s.engaged = True
                     s.engage_hold = 0
                     s.inactivity = 0
+                    s.engage_cooldown = config.ENGAGE_COOLDOWN_FRAMES
                     actions["engage_event"] = "on"
             else:
-                s.engage_hold = 0
+                if gesture != Gesture.PHONE:
+                    s.engage_hold = 0
+            s.prev_fingers = current_fingers
             return actions
+
+        # --- Click per alzata dito (indipendente dal gesto debounced) ---
+        self._detect_finger_rise(s, current_fingers, actions)
+        s.prev_fingers = current_fingers
 
         # --- Gestione per gesto ---
         # Centro del palmo: media di polso e nocche, piu' stabile del solo polso.
@@ -157,41 +152,32 @@ class StateMachine:
         if gesture == Gesture.MOVE:
             actions["move"] = self._handle_move(wrist)
 
-        elif gesture == Gesture.LEFT_CLICK:
-            if self._handle_left_click(extra):
-                # Secondo tap entro la finestra -> doppio click, altrimenti singolo
-                if s.frames_since_left_click <= config.DOUBLE_CLICK_WINDOW_FRAMES:
-                    actions["double_click"] = True
-                else:
-                    actions["left_click"] = True
-                s.frames_since_left_click = 0
-
-        elif gesture == Gesture.RIGHT_CLICK:
-            actions["right_click"] = self._handle_right_click(extra)
-
         elif gesture == Gesture.SCROLL:
             if landmarks is not None:
-                scroll_pos = np.mean(landmarks[[8, 12]], axis=0)[:2]
-                actions["scroll"] = self._handle_scroll(scroll_pos)
+                actions["scroll"] = self._handle_scroll_tilt(landmarks)
 
         elif gesture == Gesture.PINCH_ZOOM:
             actions["zoom"] = self._handle_zoom(extra)
 
         elif gesture == Gesture.DISENGAGE:
-            pass  # pugno = pausa/clutch: nessuna azione (il movimento e' sospeso)
+            pass  # pugno = pausa/clutch: nessuna azione
 
         elif gesture == Gesture.PHONE:
-            # Gesto "telefono" tenuto -> torna in standby
-            s.engage_hold += 1
-            if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
-                s.engaged = False
-                s.engage_hold = 0
-                s.inactivity = 0
-                actions["engage_event"] = "off"
-                return actions
+            if s.engage_cooldown <= 0:
+                s.engage_hold += 1
+                if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
+                    s.engaged = False
+                    s.engage_hold = 0
+                    s.inactivity = 0
+                    s.engage_cooldown = config.ENGAGE_COOLDOWN_FRAMES
+                    actions["engage_event"] = "off"
+                    return actions
 
         elif gesture == Gesture.DICTATION:
             actions["dictation_toggle"] = self._handle_dictation()
+
+        # LEFT_CLICK, RIGHT_CLICK: il click e' gia' gestito da _detect_finger_rise,
+        # qui non serve fare nulla.
 
         # --- Auto-standby dopo inattivita' ---
         active = (actions["move"] or actions["left_click"] or actions["double_click"]
@@ -208,6 +194,37 @@ class StateMachine:
 
         return actions
 
+    def _detect_finger_rise(self, s, current_fingers, actions):
+        """Rileva quando un dito passa da chiuso a esteso (alzata).
+
+        - Solo indice alza -> click sinistro
+        - Indice + medio alzano insieme -> doppio click
+        - Solo medio alza -> click destro
+
+        Le altre dita (anulare, mignolo) devono restare chiuse per evitare
+        falsi positivi durante la transizione pugno -> mano aperta (MOVE).
+        """
+        if s.click_cooldown > 0 or current_fingers is None or s.prev_fingers is None:
+            return
+
+        idx_rose = current_fingers["index"] and not s.prev_fingers["index"]
+        mid_rose = current_fingers["middle"] and not s.prev_fingers["middle"]
+        ring_down = not current_fingers["ring"]
+        pinky_down = not current_fingers["pinky"]
+
+        if not (ring_down and pinky_down):
+            return
+
+        if idx_rose and mid_rose:
+            actions["double_click"] = True
+            s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
+        elif idx_rose and not current_fingers["middle"]:
+            actions["left_click"] = True
+            s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
+        elif mid_rose and not current_fingers["index"]:
+            actions["right_click"] = True
+            s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
+
     def _exit_state(self, old_gesture):
         """Reset stato specifico quando si esce da un gesto."""
         s = self.state
@@ -215,17 +232,10 @@ class StateMachine:
             s.prev_wrist = None
             s.is_clutched = False
         elif old_gesture == Gesture.SCROLL:
-            s.scroll_axis = None
-            s.scroll_deltas.clear()
-            s.prev_scroll_pos = None
+            s.scroll_base_angle = None
             s.scroll_accum = 0.0
         elif old_gesture == Gesture.PINCH_ZOOM:
             s.prev_pinch_value = None
-        elif old_gesture in (Gesture.LEFT_CLICK, Gesture.RIGHT_CLICK):
-            s.index_tap_base = None
-            s.index_armed = False
-            s.middle_tap_base = None
-            s.middle_armed = False
         elif old_gesture == Gesture.PHONE:
             s.engage_hold = 0
         elif old_gesture == Gesture.DICTATION:
@@ -269,85 +279,33 @@ class StateMachine:
             return None
         return (dx, dy)
 
-    def _handle_left_click(self, extra):
-        """Click sinistro: tap verticale della punta dell'indice (giu-su).
+    def _handle_scroll_tilt(self, landmarks):
+        """Scroll per inclinazione mano (joystick): inclina dx -> giu, sx -> su.
 
-        Il dito resta esteso, quindi il gesto non si perde durante lo scatto.
-        Si arma quando la punta scende oltre la soglia e scatta quando risale.
+        Misura l'angolo del vettore polso->nocca media rispetto alla verticale.
+        Il primo frame registra l'angolo neutro; le deviazioni guidano lo scroll.
         """
-        return self._detect_tap(extra, "index_tap", "index_tap_base", "index_armed")
-
-    def _handle_right_click(self, extra):
-        """Click destro: tap verticale della punta del medio."""
-        return self._detect_tap(extra, "middle_tap", "middle_tap_base", "middle_armed")
-
-    def _detect_tap(self, extra, key, base_attr, armed_attr):
-        s = self.state
-        if s.click_cooldown > 0:
-            return False
-
-        rel = extra.get(key)
-        if rel is None:
-            return False
-
-        base = getattr(s, base_attr)
-        if base is None:
-            setattr(s, base_attr, rel)
-            return False
-
-        # La baseline segue la posizione "alta" (a riposo) della punta.
-        if rel < base:
-            setattr(s, base_attr, rel)
-            base = rel
-
-        depth = rel - base  # quanto la punta e' scesa rispetto al riposo
-
-        if not getattr(s, armed_attr):
-            if depth > config.CLICK_TAP_THRESHOLD:
-                setattr(s, armed_attr, True)
-        else:
-            if depth < config.CLICK_TAP_RELEASE:
-                # Risalita completata -> click
-                setattr(s, armed_attr, False)
-                setattr(s, base_attr, rel)
-                s.click_cooldown = config.CLICK_DEBOUNCE_FRAMES
-                return True
-        return False
-
-    def _handle_scroll(self, scroll_pos):
-        """Scroll con axis-lock: il delta dominante nei primi frame decide l'asse."""
         s = self.state
 
-        if s.prev_scroll_pos is None:
-            s.prev_scroll_pos = scroll_pos.copy()
+        dx = landmarks[9][0] - landmarks[0][0]
+        dy = landmarks[9][1] - landmarks[0][1]
+        angle = math.atan2(dx, -dy)
+
+        if s.scroll_base_angle is None:
+            s.scroll_base_angle = angle
             return None
 
-        dx = scroll_pos[0] - s.prev_scroll_pos[0]
-        dy = scroll_pos[1] - s.prev_scroll_pos[1]
-        s.prev_scroll_pos = scroll_pos.copy()
+        tilt = angle - s.scroll_base_angle
 
-        # Dead zone
-        if abs(dx) < config.SCROLL_DEAD_ZONE and abs(dy) < config.SCROLL_DEAD_ZONE:
+        if abs(tilt) < config.SCROLL_TILT_DEAD_ZONE:
             return None
 
-        # Axis-lock: decidi l'asse nei primi N frame
-        if s.scroll_axis is None:
-            s.scroll_deltas.append((abs(dx), abs(dy)))
-            if len(s.scroll_deltas) >= config.SCROLL_AXIS_LOCK_FRAMES:
-                avg_dx = np.mean([d[0] for d in s.scroll_deltas])
-                avg_dy = np.mean([d[1] for d in s.scroll_deltas])
-                s.scroll_axis = "h" if avg_dx > avg_dy else "v"
-            return None
-
-        # Accumulatore: i movimenti piccoli si sommano invece di essere troncati
-        # a zero da int(), cosi' lo scroll parte anche con gesti lenti.
-        delta = dy if s.scroll_axis == "v" else dx
-        s.scroll_accum += delta * config.SCROLL_SENSITIVITY
+        s.scroll_accum += tilt * config.SCROLL_TILT_SENSITIVITY
         step = int(s.scroll_accum)
         if step == 0:
             return None
         s.scroll_accum -= step
-        return (0, step) if s.scroll_axis == "v" else (step, 0)
+        return (0, step)
 
     def _handle_zoom(self, extra):
         """Zoom da distanza pinch: delta rispetto al frame precedente."""

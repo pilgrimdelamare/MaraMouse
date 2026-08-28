@@ -146,7 +146,7 @@ def classify(landmarks, pinch_min=0.03, pinch_max=0.20, pinch_activate=None):
         pinch_activate = pinch_max
     fingers = _finger_states(landmarks)
     extended_count = sum(fingers.values())
-    extra = {}
+    extra = {"fingers": fingers}
 
     # --- Pinch zoom: pollice e indice DAVVERO vicini (pinzare) ---
     # Soglia di attivazione stretta per non confonderlo con l'indice esteso.
@@ -178,24 +178,21 @@ def classify(landmarks, pinch_min=0.03, pinch_max=0.20, pinch_activate=None):
         if pinky_clearly_up:
             return Gesture.DICTATION, extra
 
-    # --- Pace (V): indice + medio estesi, resto chiuso -> scroll ---
-    if fingers["index"] and fingers["middle"] and not fingers["ring"] \
+    # --- 3 dita (indice+medio+anulare, mignolo chiuso) -> scroll tilt ---
+    # Controllato PRIMA del peace sign (2 dita) per priorita'.
+    if fingers["index"] and fingers["middle"] and fingers["ring"] \
        and not fingers["pinky"]:
         return Gesture.SCROLL, extra
 
-    # --- Indice esteso solo -> candidato click sinistro ---
+    # --- Indice esteso solo -> click sinistro (alzata rilevata in state_machine) ---
     if fingers["index"] and not fingers["middle"] and not fingers["ring"] \
        and not fingers["pinky"]:
-        # Profondita' tap = quanto la punta (8) e' sotto la nocca (5),
-        # normalizzata sulla lunghezza del dito (nocca->punta a riposo).
-        extra["index_tap"] = _tap_depth(landmarks, tip=8, mcp=5)
         return Gesture.LEFT_CLICK, extra
 
-    # --- Medio esteso -> candidato click destro ---
+    # --- Medio esteso -> click destro (alzata rilevata in state_machine) ---
     # L'anulare e' tollerato (segue naturalmente il medio): conta che indice e
     # mignolo siano chiusi, cosi' la posa e' meno scomoda da mantenere nel tap.
     if fingers["middle"] and not fingers["index"] and not fingers["pinky"]:
-        extra["middle_tap"] = _tap_depth(landmarks, tip=12, mcp=9)
         return Gesture.RIGHT_CLICK, extra
 
     # --- Mano aperta (>=4 dita estese) -> movimento cursore ---
