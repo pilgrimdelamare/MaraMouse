@@ -236,12 +236,13 @@ class StateMachine:
             actions["double_click"] = True
             s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
             s.pending_click = None
-        elif idx_rose and not current_fingers["middle"]:
-            # Indice alzato, medio giu -> pending click sinistro (attende 2 frame)
+        elif idx_rose and not mid_rose:
+            # Solo indice alzato -> pending click sinistro (attende 2 frame
+            # per vedere se arriva anche il medio per il doppio click)
             s.pending_click = "left"
             s.pending_click_timer = 2
-        elif mid_rose and not current_fingers["index"]:
-            # Medio alzato, indice giu -> click destro (senza pending)
+        elif mid_rose and not idx_rose:
+            # Solo medio alzato -> click destro
             actions["right_click"] = True
             s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
             s.pending_click = None
