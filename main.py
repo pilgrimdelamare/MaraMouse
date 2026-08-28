@@ -51,9 +51,12 @@ def main():
     config.CURSOR_SENSITIVITY = args.sensitivity
 
     # Inizializza componenti
+    print("Apertura camera...", flush=True)
     cam = Camera(source, config.CAMERA_WIDTH, config.CAMERA_HEIGHT, config.CAMERA_FPS)
+    print("Camera OK. Caricamento tracker...", flush=True)
     tracker = HandTracker(config.MAX_HANDS, config.MIN_DETECTION_CONFIDENCE,
                           config.MIN_TRACKING_CONFIDENCE)
+    print("Tracker OK.", flush=True)
     sm = StateMachine()
 
     debug = args.debug
