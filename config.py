@@ -49,7 +49,7 @@ PINCH_ACTIVATE_DISTANCE = 0.07
 ENGAGE_HOLD_FRAMES = 10
 # Cooldown dopo engage/disengage: il gesto telefono e' ignorato per ~1s,
 # evita toggle accidentali se il segno viene tenuto troppo a lungo.
-ENGAGE_COOLDOWN_FRAMES = 10
+ENGAGE_COOLDOWN_FRAMES = 20
 # Frame senza alcuna azione prima di tornare in standby (~45s a 10 fps)
 INACTIVITY_TIMEOUT_FRAMES = 450
 
