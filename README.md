@@ -39,7 +39,7 @@ Tutti i gesti funzionano solo quando il sistema è **agganciato** (vedi [Agganci
 | ✊ **Pugno chiuso** | Pausa / stacco (riposiziona la mano) |
 | 🤙 **Segno del telefono** (pollice+mignolo) ~1s | Toggle aggancio / standby |
 | ☝️ **Indice alzato** dal pugno | Click sinistro |
-| ☝️☝️ **Indice+medio alzati** insieme | Doppio click |
+| ✌️ **Indice+medio alzati** insieme | Doppio click |
 | 🖕 **Medio alzato** da solo | Click destro |
 | 🖐️ **3 dita** (I+M+R) + inclinazione mano | Scroll verticale (joystick) |
 | 🤏 **Pinch** pollice-indice | Zoom in / out |

@@ -39,7 +39,7 @@ All gestures work only when the system is **engaged** (see [Engagement](#-engage
 | ✊ **Fist** | Pause / lift-off (reposition your hand) |
 | 🤙 **Phone sign** (thumb+pinky) ~1s | Toggle engage / standby |
 | ☝️ **Index raised** from fist | Left click |
-| ☝️☝️ **Index+middle raised** together | Double click |
+| ✌️ **Index+middle raised** together | Double click |
 | 🖕 **Middle raised** alone | Right click |
 | 🖐️ **3 fingers** (I+M+R) + hand tilt | Vertical scroll (joystick) |
 | 🤏 **Pinch** thumb-index | Zoom in / out |
