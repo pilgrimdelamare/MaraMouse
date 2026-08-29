@@ -146,8 +146,12 @@ class AudioGate:
             print("[AudioGate] pip install soundcard per echo cancellation")
             return None
 
-        # Trova lo speaker per nome
+        # Trova lo speaker per nome (o ignora vecchi valori int da settings.json)
         target = config.LOOPBACK_DEVICE
+        if not isinstance(target, str):
+            print(f"[AudioGate] LOOPBACK_DEVICE={target!r} non valido (atteso stringa).")
+            print("[AudioGate] Premi 's' e riseleziona l'uscita TV.")
+            return None
         speaker = None
         for s in sc.all_speakers():
             if target.lower() in s.name.lower():
