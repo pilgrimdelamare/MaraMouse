@@ -24,8 +24,10 @@ import numpy as np
 
 import config
 
-# Silenzia i warning di soundcard (data discontinuity)
-warnings.filterwarnings("ignore", message="data discontinuity")
+# Silenzia i warning di soundcard (data discontinuity).
+# soundcard usa una classe SoundcardRuntimeWarning custom, quindi
+# filtriamo tutto dal modulo mediafoundation.
+warnings.filterwarnings("ignore", module=r"soundcard\.mediafoundation")
 
 _MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
@@ -475,7 +477,7 @@ class AudioGate:
         emb_path = os.path.join(_MODELS_DIR, config.SPEAKER_EMBEDDING)
         if not os.path.exists(emb_path):
             print(f"[AudioGate] Impronta vocale non trovata: {emb_path}")
-            print("[AudioGate] Speaker verification DISABILITATA — esegui enroll_voice.py")
+            print("[AudioGate] Speaker verification: off (opzionale, esegui enroll_voice.py)")
             return None, None
 
         try:
