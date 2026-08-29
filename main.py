@@ -14,7 +14,16 @@ Uso:
 """
 
 import argparse
+import os
 import sys
+import warnings
+
+# Silenzia log TensorFlow/MediaPipe/absl PRIMA di qualsiasi import
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"          # TF: solo errori fatali
+os.environ["GLOG_minloglevel"] = "3"               # glog (MediaPipe C++)
+os.environ["ABSL_MIN_LOG_LEVEL"] = "3"             # absl
+# Silenzia tutti i warnings Python non critici (soundcard, protobuf, ecc.)
+warnings.filterwarnings("ignore")
 
 import cv2
 

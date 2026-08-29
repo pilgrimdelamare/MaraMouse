@@ -18,16 +18,10 @@ Gira in un thread separato, non blocca il loop video.
 import json
 import os
 import threading
-import warnings
 
 import numpy as np
 
 import config
-
-# Silenzia i warning di soundcard (data discontinuity).
-# soundcard usa una classe SoundcardRuntimeWarning custom, quindi
-# filtriamo tutto dal modulo mediafoundation.
-warnings.filterwarnings("ignore", module=r"soundcard\.mediafoundation")
 
 _MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
