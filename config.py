@@ -81,14 +81,9 @@ ARMED_TIMEOUT_FRAMES = 80
 # Nome dello speaker (stringa) da cui catturare il loopback WASAPI.
 # None = disabilitato. Configura da Impostazioni ('s') nella finestra MaraMouse.
 LOOPBACK_DEVICE = None
-# Soglia RMS sotto la quale il loopback e' considerato silenzio (TV spenta/muta).
-# Sopra questa soglia, si attiva il confronto energia mic vs loopback.
-LOOPBACK_SILENCE_THRESHOLD = 100
-# Rapporto minimo mic_rms / lb_rms perche' il trigger sia accettato quando
-# la TV suona. Se il mic non ha energia "extra" rispetto alla TV, e' la TV
-# che ha triggerato, non l'utente. Valori tipici: 0.3-1.0.
-# Piu' alto = piu' restrittivo (richiede voce piu' forte sopra la TV).
-LOOPBACK_MIC_RATIO = 0.5
+# Echo cancellation: un secondo Vosk gira sul loopback. Se anche il loopback
+# riconosce la wake word, il trigger viene rifiutato (era la TV).
+# Nessuna soglia da tarare: stesso riconoscitore su entrambi i segnali.
 
 # --- Debounce generale ---
 # Frame minimi prima di cambiare stato nella macchina a stati

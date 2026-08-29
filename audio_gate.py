@@ -59,10 +59,6 @@ def list_devices():
     print("Il sistema ne catturera' il loopback per sottrarlo dal microfono.")
 
 
-def _rms(audio_int16):
-    """RMS energy di un buffer int16."""
-    return np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2))
-
 
 
 class AudioGate:
@@ -240,10 +236,16 @@ class AudioGate:
 
         # Loopback per echo cancellation (opzionale)
         lb_stream = self._open_loopback(sd, sr, chunk)
-        # Storico RMS per mic e loopback (ultimi ~2s)
-        mic_rms_hist = []
-        lb_rms_hist = []
-        rms_hist_len = 8  # ~2s a 256ms/chunk
+        # Secondo recognizer Vosk sul loopback: se anche il loopback
+        # riconosce la wake word, era la TV, non l'utente.
+        lb_rec = None
+        if lb_stream is not None:
+            lb_rec = vosk.KaldiRecognizer(model, 16000, grammar)
+            lb_rec.SetWords(False)
+            # Buffer circolare loopback per controllare gli ultimi ~3s
+            lb_ring = np.zeros(sr * 3, dtype=np.int16)
+            lb_ring_pos = 0
+            print("[AudioGate] Echo cancellation: Vosk su loopback attivo")
 
         self._ready = True
         print("[AudioGate] In ascolto (Vosk)...")
@@ -255,19 +257,22 @@ class AudioGate:
                     continue
                 audio = data.flatten()
 
-                # Traccia RMS mic
-                mic_rms = _rms(audio)
-                mic_rms_hist.append(mic_rms)
-                if len(mic_rms_hist) > rms_hist_len:
-                    mic_rms_hist.pop(0)
-
-                # Leggi loopback e traccia RMS
+                # Leggi loopback e alimenta il secondo recognizer
                 if lb_stream is not None:
                     lb_audio = self._read_loopback(lb_stream, chunk)
                     if lb_audio is not None:
-                        lb_rms_hist.append(_rms(lb_audio))
-                        if len(lb_rms_hist) > rms_hist_len:
-                            lb_rms_hist.pop(0)
+                        # Accumula nel ring buffer loopback
+                        lb_end = lb_ring_pos + len(lb_audio)
+                        if lb_end <= len(lb_ring):
+                            lb_ring[lb_ring_pos:lb_end] = lb_audio
+                        else:
+                            first = len(lb_ring) - lb_ring_pos
+                            lb_ring[lb_ring_pos:] = lb_audio[:first]
+                            lb_ring[:len(lb_audio) - first] = lb_audio[first:]
+                        lb_ring_pos = lb_end % len(lb_ring)
+                        # Feed al recognizer loopback (non ci interessa il
+                        # risultato continuo, lo controlleremo on-demand)
+                        lb_rec.AcceptWaveform(lb_audio.tobytes())
 
                 # Buffer circolare per speaker verification
                 end = ring_pos + len(audio)
@@ -300,21 +305,18 @@ class AudioGate:
                 with self._lock:
                     self._scores["wake"] = 1.0
 
-                # Echo cancellation: se TV suona, accetta solo se il mic
-                # ha energia aggiuntiva (= utente parla sopra la TV)
-                if lb_rms_hist:
-                    avg_lb = np.mean(lb_rms_hist)
-                    avg_mic = np.mean(mic_rms_hist)
-                    if avg_lb > config.LOOPBACK_SILENCE_THRESHOLD:
-                        # TV attiva: il mic deve avere energia EXTRA
-                        # (voce utente vicina >> TV a distanza)
-                        ratio = avg_mic / (avg_lb + 1e-6)
-                        if ratio < config.LOOPBACK_MIC_RATIO:
-                            print(f"[AudioGate] '{text}' RIFIUTATA (TV, "
-                                  f"mic/lb={ratio:.2f})")
-                            continue
-                        print(f"[AudioGate] '{text}' accettata (voce sopra TV, "
-                              f"mic/lb={ratio:.2f})")
+                # Echo cancellation: controlla se anche il loopback ha la wake word
+                if lb_rec is not None:
+                    # Forza il risultato finale del recognizer loopback
+                    lb_final = json.loads(lb_rec.FinalResult())
+                    lb_text = lb_final.get("text", "").strip().lower()
+                    # Reset per la prossima volta
+                    lb_rec = vosk.KaldiRecognizer(model, 16000, grammar)
+                    lb_rec.SetWords(False)
+                    if self._is_wake_phrase(lb_text):
+                        print(f"[AudioGate] '{text}' RIFIUTATA "
+                              f"(anche il loopback dice '{lb_text}')")
+                        continue
 
                 print(f"[AudioGate] Wake word Vosk: '{text}'")
 
@@ -374,11 +376,21 @@ class AudioGate:
             print(f"[AudioGate] Errore apertura microfono: {e}")
             return
 
-        # Loopback per echo cancellation (opzionale)
+        # Loopback per echo cancellation (opzionale) — Vosk sul loopback
         lb_stream = self._open_loopback(sd, sr, chunk)
-        mic_rms_hist = []
-        lb_rms_hist = []
-        rms_hist_len = 25  # ~2s a 80ms/chunk
+        lb_vosk_rec = None
+        if lb_stream is not None:
+            try:
+                import vosk
+                vosk.SetLogLevel(-1)
+                lb_model = vosk.Model(lang="en-us")
+                lb_vosk_rec = vosk.KaldiRecognizer(
+                    lb_model, 16000,
+                    json.dumps(config.WAKE_WORD_GRAMMAR))
+                lb_vosk_rec.SetWords(False)
+                print("[AudioGate] Echo cancellation: Vosk su loopback attivo")
+            except ImportError:
+                print("[AudioGate] Vosk non disponibile per echo cancellation")
 
         self._ready = True
         print("[AudioGate] In ascolto (openWakeWord)...")
@@ -390,16 +402,11 @@ class AudioGate:
                     continue
                 audio = data.flatten()
 
-                # Traccia RMS mic e loopback
-                mic_rms_hist.append(_rms(audio))
-                if len(mic_rms_hist) > rms_hist_len:
-                    mic_rms_hist.pop(0)
+                # Feed loopback al Vosk di controllo
                 if lb_stream is not None:
                     lb_audio = self._read_loopback(lb_stream, chunk)
-                    if lb_audio is not None:
-                        lb_rms_hist.append(_rms(lb_audio))
-                        if len(lb_rms_hist) > rms_hist_len:
-                            lb_rms_hist.pop(0)
+                    if lb_audio is not None and lb_vosk_rec is not None:
+                        lb_vosk_rec.AcceptWaveform(lb_audio.tobytes())
 
                 # Buffer circolare per speaker verification
                 end = ring_pos + len(audio)
@@ -419,17 +426,20 @@ class AudioGate:
                         self._scores["wake"] = float(score)
 
                     if score >= config.WAKE_WORD_THRESHOLD:
-                        # Echo cancellation
-                        if lb_rms_hist:
-                            avg_lb = np.mean(lb_rms_hist)
-                            avg_mic = np.mean(mic_rms_hist)
-                            if avg_lb > config.LOOPBACK_SILENCE_THRESHOLD:
-                                ratio = avg_mic / (avg_lb + 1e-6)
-                                if ratio < config.LOOPBACK_MIC_RATIO:
-                                    print(f"[AudioGate] '{name}' RIFIUTATA "
-                                          f"(TV, mic/lb={ratio:.2f})")
-                                    oww.reset()
-                                    break
+                        # Echo cancellation: il loopback ha la wake word?
+                        if lb_vosk_rec is not None:
+                            lb_final = json.loads(lb_vosk_rec.FinalResult())
+                            lb_text = lb_final.get("text", "").strip().lower()
+                            import vosk as _vosk
+                            lb_vosk_rec = _vosk.KaldiRecognizer(
+                                lb_model, 16000,
+                                json.dumps(config.WAKE_WORD_GRAMMAR))
+                            lb_vosk_rec.SetWords(False)
+                            if self._is_wake_phrase(lb_text):
+                                print(f"[AudioGate] '{name}' RIFIUTATA "
+                                      f"(loopback dice '{lb_text}')")
+                                oww.reset()
+                                break
                         print(f"[AudioGate] Wake word '{name}': {score:.3f}")
                         oww.reset()
 
