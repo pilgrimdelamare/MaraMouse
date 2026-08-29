@@ -81,10 +81,9 @@ ARMED_TIMEOUT_FRAMES = 80
 # Nome dello speaker (stringa) da cui catturare il loopback WASAPI.
 # None = disabilitato. Configura da Impostazioni ('s') nella finestra MaraMouse.
 LOOPBACK_DEVICE = None
-# Soglia RMS energy sul loopback: se l'audio TV supera questa soglia quando
-# scatta il wake word, il trigger viene rifiutato (era la TV, non l'utente).
-# Valori tipici: 200-500. Piu' basso = piu' aggressivo nel rifiutare.
-LOOPBACK_ENERGY_THRESHOLD = 300
+# Guadagno sottrazione spettrale: compensa l'attenuazione dell'audio TV nel
+# tragitto speaker->microfono. >1 = piu' aggressivo. 1.0-3.0 range tipico.
+LOOPBACK_GAIN = 2.0
 
 # --- Debounce generale ---
 # Frame minimi prima di cambiare stato nella macchina a stati
