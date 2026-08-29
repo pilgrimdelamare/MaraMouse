@@ -165,6 +165,8 @@ def main():
         # Bip di stato (sempre, anche in debug e anche senza mano nel frame)
         if result["engage_event"] == "armed":
             actions.beep_armed()
+        elif result["engage_event"] == "hand_seen":
+            actions.beep_hand()
         elif result["engage_event"] == "on":
             actions.beep_engage()
         elif result["engage_event"] == "off":
@@ -188,6 +190,8 @@ def main():
             ev = "DICTATION"
         elif result["engage_event"] == "armed":
             ev = "VOICE OK"
+        elif result["engage_event"] == "hand_seen":
+            ev = "HAND OK"
         elif result["engage_event"] == "armed_timeout":
             ev = "TIMEOUT"
         if ev:

@@ -50,6 +50,7 @@ class GestureState:
         self.engage_cooldown = 0     # cooldown dopo engage/disengage
         self.inactivity = 0          # frame senza azioni (per auto-standby)
         self.armed_timer = 0         # frame rimasti in stato ARMED prima di timeout
+        self.armed_hand_seen = False # True = mano gia' vista in stato ARMED
 
         # --- Dettatura ---
         self.dictation_active = False
@@ -131,6 +132,7 @@ class StateMachine:
                     s.armed_timer = config.ARMED_TIMEOUT_FRAMES
                     s.engage_hold = 0
                     s.engage_cooldown = 0
+                    s.armed_hand_seen = False
                     actions["engage_event"] = "armed"
             else:
                 # Vecchio flusso: telefono diretto
@@ -157,6 +159,11 @@ class StateMachine:
                 actions["engage_event"] = "armed_timeout"
                 s.prev_fingers = current_fingers
                 return actions
+
+            # Woosh quando vede la mano per la prima volta
+            if landmarks is not None and not s.armed_hand_seen:
+                s.armed_hand_seen = True
+                actions["engage_event"] = "hand_seen"
 
             if gesture == Gesture.PHONE and s.engage_cooldown <= 0:
                 s.engage_hold += 1
