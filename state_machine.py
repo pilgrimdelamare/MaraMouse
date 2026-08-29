@@ -1,6 +1,7 @@
 """Macchina a stati centrale MaraMouse.
 
 Arbitra tra i gesti, gestisce:
+- Aggancio a tre stati: IDLE -> ARMED (gate vocale) -> ACTIVE (gesto telefono)
 - Clutch relativo per il movimento cursore (pen-up/pen-down, rif: Air Canvas)
 - Click per alzata dito (indice = sinistro, indice+medio = doppio, medio = destro)
 - Scroll per inclinazione mano (3 dita + tilt, tipo joystick)
@@ -43,12 +44,12 @@ class GestureState:
         # --- Pinch zoom ---
         self.prev_pinch_value = None
 
-        # --- Aggancio globale (engage/standby) ---
-        self.engaged = False         # False = standby, non tocca il mouse
+        # --- Aggancio globale (IDLE / ARMED / ACTIVE) ---
+        self.engage_state = "idle"   # "idle" | "armed" | "active"
         self.engage_hold = 0         # frame di gesto telefono tenuto
         self.engage_cooldown = 0     # cooldown dopo engage/disengage
         self.inactivity = 0          # frame senza azioni (per auto-standby)
-        self.hand_present = False    # mano nell'inquadratura nel frame precedente
+        self.armed_timer = 0         # frame rimasti in stato ARMED prima di timeout
 
         # --- Dettatura ---
         self.dictation_active = False
@@ -61,11 +62,16 @@ class GestureState:
 
 
 class StateMachine:
-    def __init__(self):
+    def __init__(self, use_audio_gate=True):
         self.state = GestureState()
+        self.use_audio_gate = use_audio_gate
 
-    def update(self, gesture, extra, landmarks):
+    def update(self, gesture, extra, landmarks, audio_armed=False):
         """Aggiorna la macchina a stati con il gesto classificato.
+
+        Args:
+            audio_armed: True quando il gate vocale ha confermato la wake word
+                         + speaker verification (segnale one-shot da AudioGate).
 
         Returns:
             dict con le azioni da eseguire.
@@ -78,7 +84,7 @@ class StateMachine:
             "scroll": None,
             "zoom": None,
             "dictation_toggle": False,
-            "engage_event": None,   # "on" | "off" | "hand"
+            "engage_event": None,   # "armed" | "armed_timeout" | "on" | "off"
         }
 
         s = self.state
@@ -93,12 +99,6 @@ class StateMachine:
 
         # Stato dita corrente (per rilevare alzate)
         current_fingers = extra.get("fingers")
-
-        # Bip quando la mano compare nell'inquadratura mentre si e' in standby
-        hand_now = landmarks is not None
-        if not s.engaged and hand_now and not s.hand_present:
-            actions["engage_event"] = "hand"
-        s.hand_present = hand_now
 
         # --- Debounce: richiedi N frame consecutivi prima di cambiare stato ---
         if gesture != s.current_gesture:
@@ -123,16 +123,51 @@ class StateMachine:
 
         s.gesture_frames += 1
 
-        # --- Aggancio globale (engage/standby) ---
-        if not s.engaged:
+        # --- IDLE: attende gate vocale (o gesto telefono se audio disabilitato) ---
+        if s.engage_state == "idle":
+            if self.use_audio_gate:
+                if audio_armed:
+                    s.engage_state = "armed"
+                    s.armed_timer = config.ARMED_TIMEOUT_FRAMES
+                    s.engage_hold = 0
+                    s.engage_cooldown = 0
+                    actions["engage_event"] = "armed"
+            else:
+                # Vecchio flusso: telefono diretto
+                if gesture == Gesture.PHONE and s.engage_cooldown <= 0:
+                    s.engage_hold += 1
+                    if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
+                        s.engage_state = "active"
+                        s.engage_hold = 0
+                        s.inactivity = 0
+                        s.engage_cooldown = config.ENGAGE_COOLDOWN_FRAMES
+                        actions["engage_event"] = "on"
+                else:
+                    if gesture != Gesture.PHONE:
+                        s.engage_hold = 0
+            s.prev_fingers = current_fingers
+            return actions
+
+        # --- ARMED: attende gesto telefono entro il timeout ---
+        if s.engage_state == "armed":
+            s.armed_timer -= 1
+            if s.armed_timer <= 0:
+                s.engage_state = "idle"
+                s.engage_hold = 0
+                actions["engage_event"] = "armed_timeout"
+                s.prev_fingers = current_fingers
+                return actions
+
             if gesture == Gesture.PHONE and s.engage_cooldown <= 0:
                 s.engage_hold += 1
                 if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
-                    s.engaged = True
+                    s.engage_state = "active"
                     s.engage_hold = 0
                     s.inactivity = 0
                     s.engage_cooldown = config.ENGAGE_COOLDOWN_FRAMES
                     actions["engage_event"] = "on"
+                    s.prev_fingers = current_fingers
+                    return actions
             else:
                 if gesture != Gesture.PHONE:
                     s.engage_hold = 0
@@ -144,12 +179,13 @@ class StateMachine:
         s.prev_fingers = current_fingers
 
         # --- Gestione per gesto ---
-        # Centro del palmo: media di polso e nocche, piu' stabile del solo polso.
+        # Polso (landmark 0): punto di ancoraggio piu' stabile per il cursore.
+        # La media del palmo (polso+nocche) si sposta quando le dita si chiudono,
+        # causando drift involontario durante la transizione MOVE -> click.
         if landmarks is not None:
-            palm = np.mean(landmarks[[0, 5, 9, 13, 17]], axis=0)[:2]
+            wrist = landmarks[0][:2].copy()
         else:
-            palm = None
-        wrist = palm
+            wrist = None
 
         if gesture == Gesture.MOVE:
             actions["move"] = self._handle_move(wrist)
@@ -168,7 +204,7 @@ class StateMachine:
             if s.engage_cooldown <= 0:
                 s.engage_hold += 1
                 if s.engage_hold >= config.ENGAGE_HOLD_FRAMES:
-                    s.engaged = False
+                    s.engage_state = "idle"
                     s.engage_hold = 0
                     s.inactivity = 0
                     s.engage_cooldown = config.ENGAGE_COOLDOWN_FRAMES
@@ -190,7 +226,7 @@ class StateMachine:
         else:
             s.inactivity += 1
             if s.inactivity >= config.INACTIVITY_TIMEOUT_FRAMES:
-                s.engaged = False
+                s.engage_state = "idle"
                 s.inactivity = 0
                 actions["engage_event"] = "off"
 
@@ -226,6 +262,11 @@ class StateMachine:
             s.pending_click = None
             return
 
+        # Quante dita erano estese nel frame precedente: se la mano era gia'
+        # aperta (>=3 dita su), un'alzata singola e' rumore, non un click.
+        prev_extended = sum(v for k, v in s.prev_fingers.items() if k != "thumb")
+        from_closed = prev_extended <= 1
+
         if idx_rose and mid_rose:
             # Entrambi nello stesso frame -> doppio click
             actions["double_click"] = True
@@ -236,13 +277,13 @@ class StateMachine:
             actions["double_click"] = True
             s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
             s.pending_click = None
-        elif idx_rose and not mid_rose:
-            # Solo indice alzato -> pending click sinistro (attende 2 frame
-            # per vedere se arriva anche il medio per il doppio click)
+        elif idx_rose and not mid_rose and from_closed:
+            # Solo indice alzato da mano chiusa -> pending click sinistro
+            # (attende 2 frame per vedere se arriva anche il medio)
             s.pending_click = "left"
             s.pending_click_timer = 2
-        elif mid_rose and not idx_rose:
-            # Solo medio alzato -> click destro
+        elif mid_rose and not idx_rose and from_closed:
+            # Solo medio alzato da mano chiusa -> click destro
             actions["right_click"] = True
             s.click_cooldown = config.CLICK_COOLDOWN_FRAMES
             s.pending_click = None

@@ -5,3 +5,12 @@ mediapipe==0.10.14
 opencv-python>=4.8.0
 pynput>=1.7.6
 numpy>=1.24.0
+# --- Audio gate (wake word + speaker verification) ---
+sounddevice>=0.4.6
+vosk>=0.3.45
+# openwakeword e' opzionale: se presente un modello ONNX custom in models/,
+# viene usato al posto di Vosk. Altrimenti Vosk basta da solo.
+# openwakeword>=0.6.0
+# speechbrain trascina torch e torchaudio (~2GB). Speaker verification e'
+# opzionale: senza speechbrain il gate funziona solo con la wake word.
+# speechbrain>=1.0.0

@@ -58,6 +58,24 @@ INACTIVITY_TIMEOUT_FRAMES = 450
 # per evitare toggle accidentali della dettatura.
 DICTATION_HOLD_FRAMES = 14
 
+# --- Audio gate (wake word + speaker verification) ---
+# Il gate vocale richiede "Maramouse" + verifica parlante prima di armare il gesto.
+AUDIO_GATE_ENABLED = True
+# Nome file del modello ONNX nella cartella models/ (se presente, usa openWakeWord)
+WAKE_WORD_MODEL = "maramouse.onnx"
+# Grammatica Vosk: usata quando il modello ONNX non esiste.
+# Il recognizer accetta solo queste frasi (tutto il resto e' [unk]).
+# "mara mouse" copre la pronuncia naturale; varianti fonetiche aiutano.
+WAKE_WORD_GRAMMAR = ["mara mouse", "mara maus", "[unk]"]
+# Nome file dell'embedding di riferimento nella cartella models/ (generato da enroll_voice.py)
+SPEAKER_EMBEDDING = "speaker_embedding.npy"
+# Soglia di confidenza per il rilevamento wake word openWakeWord (0-1)
+WAKE_WORD_THRESHOLD = 0.5
+# Soglia similarita' coseno per speaker verification (0-1)
+SPEAKER_THRESHOLD = 0.25
+# Frame di timeout nello stato ARMED prima di tornare a IDLE (~8s a 10fps)
+ARMED_TIMEOUT_FRAMES = 80
+
 # --- Debounce generale ---
 # Frame minimi prima di cambiare stato nella macchina a stati
 STATE_CHANGE_DEBOUNCE = 4

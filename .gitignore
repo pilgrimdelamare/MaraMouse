@@ -12,3 +12,8 @@ venv/
 hand_landmarker.task
 diag_frames/
 *.lnk
+
+# Modelli audio e embedding vocale (generati localmente, troppo pesanti per git)
+models/*.onnx
+models/*.npy
+models/spkrec-ecapa/

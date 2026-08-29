@@ -33,6 +33,13 @@ def beep_hand():
     _play("hand.wav")
 
 
+def beep_armed():
+    """Voce riconosciuta — stato ARMED (doppio bip ascendente)."""
+    if winsound is not None:
+        winsound.Beep(600, 100)
+        winsound.Beep(800, 100)
+
+
 def beep_engage():
     """Tracking agganciato — bip sintetico breve."""
     if winsound is not None:

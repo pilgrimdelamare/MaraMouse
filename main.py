@@ -25,6 +25,14 @@ from gesture_classifier import classify, Gesture, _finger_states
 from state_machine import StateMachine
 import actions
 
+# Audio gate: basta sounddevice + vosk (o openwakeword se c'e' il modello ONNX)
+try:
+    import sounddevice  # noqa: F401
+    from audio_gate import AudioGate
+    _AUDIO_AVAILABLE = True
+except ImportError:
+    _AUDIO_AVAILABLE = False
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MaraMouse - Hand gesture mouse control")
@@ -36,6 +44,8 @@ def parse_args():
                         help="Disable camera preview window")
     parser.add_argument("--debug", action="store_true",
                         help="Mostra scheletro mano e stato dita, NON muove il mouse")
+    parser.add_argument("--no-audio", action="store_true",
+                        help="Disabilita gate vocale (usa solo gesto telefono)")
     return parser.parse_args()
 
 
@@ -57,12 +67,29 @@ def main():
     tracker = HandTracker(config.MAX_HANDS, config.MIN_DETECTION_CONFIDENCE,
                           config.MIN_TRACKING_CONFIDENCE)
     print("Tracker OK.", flush=True)
-    sm = StateMachine()
+
+    # --- Audio gate ---
+    use_audio = (config.AUDIO_GATE_ENABLED and _AUDIO_AVAILABLE
+                 and not args.no_audio)
+    audio_gate = None
+    if use_audio:
+        print("Avvio gate vocale...", flush=True)
+        audio_gate = AudioGate()
+        audio_gate.start()
+    elif not args.no_audio and config.AUDIO_GATE_ENABLED and not _AUDIO_AVAILABLE:
+        print("WARN: dipendenze audio mancanti, gate vocale disabilitato.")
+        print("      Installa: pip install sounddevice vosk")
+
+    sm = StateMachine(use_audio_gate=use_audio)
 
     debug = args.debug
 
     print("MaraMouse avviato. Premi 'q' per uscire, '1/2/3' per cambiare camera.")
     print(f"Sorgente: {source} | Sensibilita: {config.CURSOR_SENSITIVITY}")
+    if use_audio:
+        print("Gate vocale: ATTIVO (di' 'Maramouse' per armare)")
+    else:
+        print("Gate vocale: DISATTIVATO (segno telefono diretto)")
     if debug:
         print("MODALITA DEBUG: mouse NON controllato, mostro landmark e stato dita.")
 
@@ -102,7 +129,10 @@ def main():
         else:
             gesture, extra = Gesture.NONE, {}
 
-        result = sm.update(gesture, extra, landmarks)
+        # Poll gate vocale
+        audio_armed = audio_gate.poll_armed() if audio_gate else False
+
+        result = sm.update(gesture, extra, landmarks, audio_armed=audio_armed)
 
         # In debug non tocchiamo il mouse: solo osservazione.
         if not debug:
@@ -122,11 +152,13 @@ def main():
                 actions.toggle_dictation()
 
         # Bip di stato (sempre, anche in debug e anche senza mano nel frame)
-        if result["engage_event"] == "hand":
-            actions.beep_hand()
+        if result["engage_event"] == "armed":
+            actions.beep_armed()
         elif result["engage_event"] == "on":
             actions.beep_engage()
         elif result["engage_event"] == "off":
+            actions.beep_disengage()
+        elif result["engage_event"] == "armed_timeout":
             actions.beep_disengage()
 
         # Evento da mostrare in overlay
@@ -143,6 +175,10 @@ def main():
             ev = "ZOOM"
         elif result["dictation_toggle"]:
             ev = "DICTATION"
+        elif result["engage_event"] == "armed":
+            ev = "VOICE OK"
+        elif result["engage_event"] == "armed_timeout":
+            ev = "TIMEOUT"
         if ev:
             event_text = ev
             event_timer = 15
@@ -153,7 +189,7 @@ def main():
                 _draw_landmarks(frame, landmarks)
                 if debug:
                     _draw_finger_states(frame, landmarks)
-            _draw_hud(frame, gesture, sm.state, extra)
+            _draw_hud(frame, gesture, sm.state, extra, use_audio)
 
         # Overlay evento (lampeggia per qualche frame)
         if show_preview and event_timer > 0:
@@ -184,6 +220,8 @@ def main():
             # Placeholder per IP webcam - l'utente puo' configurare in config.py
             print("Camera 3: configura URL in config.py")
 
+    if audio_gate:
+        audio_gate.stop()
     cam.release()
     tracker.release()
     cv2.destroyAllWindows()
@@ -225,28 +263,58 @@ def _draw_finger_states(frame, landmarks):
         x += 60
 
 
-def _draw_hud(frame, gesture, state, extra):
+def _draw_hud(frame, gesture, state, extra, use_audio_gate=True):
     """Disegna overlay informativo sul frame di preview."""
     h, w = frame.shape[:2]
 
-    # Stato di aggancio globale
-    if not state.engaged:
+    # --- IDLE ---
+    if state.engage_state == "idle":
         cv2.putText(frame, "STANDBY", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-        # Progresso aggancio (pugno tenuto)
-        if gesture == Gesture.PHONE and state.engage_hold > 0:
-            progress = state.engage_hold / config.ENGAGE_HOLD_FRAMES
-            bar_w = int(min(progress, 1.0) * 200)
-            cv2.rectangle(frame, (10, h - 30), (10 + bar_w, h - 10), (0, 200, 0), -1)
-            cv2.rectangle(frame, (10, h - 30), (210, h - 10), (255, 255, 255), 1)
-            cv2.putText(frame, "AGGANCIO... (telefono)", (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
-        else:
-            cv2.putText(frame, "segno telefono per agganciare", (10, 60),
+        if use_audio_gate:
+            cv2.putText(frame, "di' 'Maramouse' per iniziare", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        else:
+            # Flusso senza audio: progresso telefono
+            if gesture == Gesture.PHONE and state.engage_hold > 0:
+                progress = state.engage_hold / config.ENGAGE_HOLD_FRAMES
+                bar_w = int(min(progress, 1.0) * 200)
+                cv2.rectangle(frame, (10, h - 30), (10 + bar_w, h - 10),
+                              (0, 200, 0), -1)
+                cv2.rectangle(frame, (10, h - 30), (210, h - 10),
+                              (255, 255, 255), 1)
+                cv2.putText(frame, "AGGANCIO... (telefono)", (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 0), 2)
+            else:
+                cv2.putText(frame, "segno telefono per agganciare", (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         return
 
-    # Agganciato: nome gesto corrente
+    # --- ARMED (attende gesto telefono con timeout) ---
+    if state.engage_state == "armed":
+        cv2.putText(frame, "ARMED", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+        # Countdown timeout
+        secs_left = max(0, state.armed_timer / 10.0)
+        cv2.putText(frame, f"segno telefono! ({secs_left:.0f}s)", (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1)
+        # Barra timeout
+        progress = state.armed_timer / config.ARMED_TIMEOUT_FRAMES
+        bar_w = int(min(progress, 1.0) * 200)
+        cv2.rectangle(frame, (10, h - 30), (10 + bar_w, h - 10),
+                      (0, 200, 255), -1)
+        cv2.rectangle(frame, (10, h - 30), (210, h - 10), (255, 255, 255), 1)
+        # Progresso gesto telefono
+        if gesture == Gesture.PHONE and state.engage_hold > 0:
+            hold_p = state.engage_hold / config.ENGAGE_HOLD_FRAMES
+            hold_w = int(min(hold_p, 1.0) * 200)
+            cv2.rectangle(frame, (10, h - 55), (10 + hold_w, h - 35),
+                          (0, 255, 0), -1)
+            cv2.rectangle(frame, (10, h - 55), (210, h - 35),
+                          (255, 255, 255), 1)
+        return
+
+    # --- ACTIVE ---
     cv2.putText(frame, f"ACTIVE  {gesture.name}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
