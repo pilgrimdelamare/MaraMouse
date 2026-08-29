@@ -115,31 +115,29 @@ class AudioGate:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _open_loopback(sd, sr, chunk):
-        """Apre il loopback WASAPI per catturare l'audio del sistema (TV).
+    def _start_loopback_thread(sr, chunk, stop_event):
+        """Avvia un thread che cattura il loopback WASAPI in background.
 
-        Usa la libreria soundcard che supporta WASAPI loopback nativamente.
-        config.LOOPBACK_DEVICE e' il nome (stringa) dello speaker da catturare.
+        Ritorna un oggetto con .get_audio() non bloccante e .stop(),
+        oppure None se il loopback non e' configurato/disponibile.
         """
         if not config.LOOPBACK_DEVICE:
             return None
 
         try:
             import soundcard as sc
-            # Zittisce "data discontinuity in recording" che soundcard
-            # spamma ogni volta che il loopback ha un gap di silenzio.
             import soundcard.mediafoundation as _scmf
             _scmf.warnings = type("_W", (), {"warn": lambda *a, **k: None})()
         except ImportError:
             print("[AudioGate] pip install soundcard per echo cancellation")
             return None
 
-        # Trova lo speaker per nome (o ignora vecchi valori int da settings.json)
         target = config.LOOPBACK_DEVICE
         if not isinstance(target, str):
             print(f"[AudioGate] LOOPBACK_DEVICE={target!r} non valido (atteso stringa).")
             print("[AudioGate] Premi 's' e riseleziona l'uscita TV.")
             return None
+
         speaker = None
         for s in sc.all_speakers():
             if target.lower() in s.name.lower():
@@ -154,25 +152,50 @@ class AudioGate:
         try:
             loopback_mic = sc.get_microphone(id=str(speaker.id),
                                              include_loopback=True)
-            recorder = loopback_mic.recorder(samplerate=sr, channels=1,
-                                             blocksize=chunk)
-            recorder.__enter__()
-            print(f"[AudioGate] Loopback WASAPI: {speaker.name}")
-            return recorder
         except Exception as e:
             print(f"[AudioGate] Loopback non disponibile: {e}")
             return None
 
-    @staticmethod
-    def _read_loopback(recorder, chunk):
-        """Legge un chunk dal loopback soundcard e lo converte in int16."""
-        try:
-            # soundcard restituisce float32 in [-1, 1]
-            data = recorder.record(numframes=chunk)
-            audio = (data[:, 0] * 32768).clip(-32768, 32767).astype(np.int16)
-            return audio
-        except Exception:
-            return None
+        class LoopbackReader:
+            """Legge il loopback in un thread separato, non blocca il loop mic."""
+
+            def __init__(self):
+                self._lock = threading.Lock()
+                self._latest = None  # ultimo chunk int16
+                self._recorder = None
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+
+            def _run(self):
+                try:
+                    rec = loopback_mic.recorder(samplerate=sr, channels=1,
+                                                blocksize=chunk)
+                    rec.__enter__()
+                    self._recorder = rec
+                    print(f"[AudioGate] Loopback WASAPI: {speaker.name}")
+
+                    while not stop_event.is_set():
+                        data = rec.record(numframes=chunk)
+                        audio = (data[:, 0] * 32768).clip(-32768, 32767).astype(np.int16)
+                        with self._lock:
+                            self._latest = audio
+                except Exception as e:
+                    print(f"[AudioGate] Loopback thread errore: {e}")
+                finally:
+                    if self._recorder is not None:
+                        try:
+                            self._recorder.__exit__(None, None, None)
+                        except Exception:
+                            pass
+
+            def get_audio(self):
+                """Ritorna l'ultimo chunk letto (non bloccante). None se niente."""
+                with self._lock:
+                    audio = self._latest
+                    self._latest = None
+                    return audio
+
+        return LoopbackReader()
 
     # ------------------------------------------------------------------
     #  Vosk backend
@@ -234,12 +257,10 @@ class AudioGate:
             print(f"[AudioGate] Errore apertura microfono: {e}")
             return
 
-        # Loopback per echo cancellation (opzionale)
-        lb_stream = self._open_loopback(sd, sr, chunk)
-        # Secondo recognizer Vosk sul loopback: se anche il loopback
-        # riconosce la wake word, era la TV, non l'utente.
+        # Loopback per echo cancellation (thread separato, non bloccante)
+        lb_reader = self._start_loopback_thread(sr, chunk, self._stop_event)
         lb_rec = None
-        if lb_stream is not None:
+        if lb_reader is not None:
             lb_rec = vosk.KaldiRecognizer(model, 16000, grammar)
             lb_rec.SetWords(False)
             print("[AudioGate] Echo cancellation: Vosk su loopback attivo")
@@ -259,9 +280,9 @@ class AudioGate:
                     continue
                 audio = data.flatten()
 
-                # Leggi loopback e alimenta il secondo recognizer
-                if lb_stream is not None:
-                    lb_audio = self._read_loopback(lb_stream, chunk)
+                # Leggi loopback (non bloccante) e alimenta il secondo recognizer
+                if lb_reader is not None:
+                    lb_audio = lb_reader.get_audio()
                     if lb_audio is not None:
                         lb_rec.AcceptWaveform(lb_audio.tobytes())
 
@@ -339,8 +360,7 @@ class AudioGate:
         finally:
             stream.stop()
             stream.close()
-            if lb_stream is not None:
-                lb_stream.__exit__(None, None, None)
+            # lb_reader si chiude da solo quando stop_event e' set
 
     # ------------------------------------------------------------------
     #  openWakeWord backend (usato solo se modello ONNX presente)
@@ -377,10 +397,10 @@ class AudioGate:
             print(f"[AudioGate] Errore apertura microfono: {e}")
             return
 
-        # Loopback per echo cancellation (opzionale) — Vosk sul loopback
-        lb_stream = self._open_loopback(sd, sr, chunk)
+        # Loopback per echo cancellation (thread separato, non bloccante)
+        lb_reader = self._start_loopback_thread(sr, chunk, self._stop_event)
         lb_vosk_rec = None
-        if lb_stream is not None:
+        if lb_reader is not None:
             try:
                 import vosk
                 vosk.SetLogLevel(-1)
@@ -403,10 +423,10 @@ class AudioGate:
                     continue
                 audio = data.flatten()
 
-                # Feed loopback al Vosk di controllo
-                if lb_stream is not None:
-                    lb_audio = self._read_loopback(lb_stream, chunk)
-                    if lb_audio is not None and lb_vosk_rec is not None:
+                # Leggi loopback (non bloccante) e alimenta Vosk di controllo
+                if lb_reader is not None and lb_vosk_rec is not None:
+                    lb_audio = lb_reader.get_audio()
+                    if lb_audio is not None:
                         lb_vosk_rec.AcceptWaveform(lb_audio.tobytes())
 
                 # Buffer circolare per speaker verification
@@ -463,8 +483,6 @@ class AudioGate:
         finally:
             stream.stop()
             stream.close()
-            if lb_stream is not None:
-                lb_stream.__exit__(None, None, None)
 
     # ------------------------------------------------------------------
     #  Speaker verification
