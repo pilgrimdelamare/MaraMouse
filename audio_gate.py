@@ -1,11 +1,14 @@
-"""Gate vocale MaraMouse: wake word + speaker verification.
+"""Gate vocale MaraMouse: wake word + speaker verification + echo cancellation.
 
-Pipeline: microfono -> Vosk (riconoscimento vincolato a grammatica) ->
-          speaker verification -> segnale ARMED.
+Pipeline: microfono -> sottrazione spettrale audio TV (loopback HDMI) ->
+          Vosk (grammatica vincolata) -> speaker verification -> ARMED.
 
 Vosk con grammatica ["mara mouse", "[unk]"] funziona come un keyword spotter:
 riconosce solo la wake word o rumore, con CPU bassissima e senza training.
 Se e' presente un modello openWakeWord custom (maramouse.onnx), usa quello.
+
+Echo cancellation: cattura l'audio di sistema (TV via HDMI) e lo sottrae
+dal segnale del microfono per evitare falsi positivi dalla TV.
 
 Gira in un thread separato, non blocca il loop video.
 """
@@ -19,6 +22,55 @@ import numpy as np
 import config
 
 _MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
+
+
+def list_devices():
+    """Stampa tutti i dispositivi audio disponibili (per configurare il loopback)."""
+    import sounddevice as sd
+    print("=== DISPOSITIVI AUDIO ===")
+    print()
+    for i, dev in enumerate(sd.query_devices()):
+        ch_in = dev['max_input_channels']
+        ch_out = dev['max_output_channels']
+        api = sd.query_hostapis(dev['hostapi'])['name']
+        direction = []
+        if ch_in > 0:
+            direction.append(f"IN:{ch_in}")
+        if ch_out > 0:
+            direction.append(f"OUT:{ch_out}")
+        marker = ""
+        default_in = sd.query_devices(sd.default.device[0])
+        default_out = sd.query_devices(sd.default.device[1])
+        if dev['name'] == default_in['name'] and ch_in > 0:
+            marker = " <<< MIC"
+        if dev['name'] == default_out['name'] and ch_out > 0:
+            marker += " <<< SPEAKER"
+        print(f"  [{i:2d}] {dev['name'][:50]:<50s} {' '.join(direction):<12s} "
+              f"[{api}]{marker}")
+    print()
+    print("Per abilitare echo cancellation TV, imposta LOOPBACK_DEVICE in config.py")
+    print("con l'indice del dispositivo di uscita HDMI (quello della TV).")
+    print("Il sistema ne catturera' il loopback per sottrarlo dal microfono.")
+
+
+def _spectral_subtract(mic, ref, gain=1.5):
+    """Sottrae lo spettro del riferimento (audio TV) dal microfono.
+
+    Sottrazione spettrale semplice: rimuove le frequenze della TV dal segnale
+    del microfono, preservando la voce dell'utente (che non e' nel loopback).
+    Il gain compensa l'attenuazione dell'audio TV nel tragitto speaker->mic.
+    """
+    mic_f = np.fft.rfft(mic.astype(np.float32))
+    ref_f = np.fft.rfft(ref.astype(np.float32))
+
+    mic_mag = np.abs(mic_f)
+    ref_mag = np.abs(ref_f) * gain
+
+    # Floor: mantieni almeno il 5% del segnale originale per evitare artefatti
+    clean_mag = np.maximum(mic_mag - ref_mag, mic_mag * 0.05)
+    clean_f = clean_mag * np.exp(1j * np.angle(mic_f))
+
+    return np.fft.irfft(clean_f, n=len(mic)).clip(-32768, 32767).astype(np.int16)
 
 
 class AudioGate:
@@ -74,6 +126,77 @@ class AudioGate:
         else:
             self._run_vosk(sd)
 
+    # ------------------------------------------------------------------
+    #  Loopback: cattura audio di sistema per echo cancellation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _open_loopback(sd, sr, chunk):
+        """Apre lo stream di loopback per catturare l'audio del sistema (TV).
+
+        Usa WASAPI su Windows: apre il dispositivo di output come input
+        (loopback capture). Richiede config.LOOPBACK_DEVICE impostato.
+        """
+        if config.LOOPBACK_DEVICE is None:
+            return None
+
+        try:
+            dev_info = sd.query_devices(config.LOOPBACK_DEVICE)
+            # Il dispositivo puo' essere un output (loopback) o un input (virtual cable)
+            ch_in = dev_info['max_input_channels']
+            ch_out = dev_info['max_output_channels']
+            if ch_in > 0:
+                # E' un dispositivo di input (es. CABLE Output, virtual cable)
+                channels = min(ch_in, 2)
+            elif ch_out > 0:
+                # E' un dispositivo di output — prova ad aprirlo come loopback
+                channels = min(ch_out, 2)
+            else:
+                print(f"[AudioGate] Loopback device {config.LOOPBACK_DEVICE}: "
+                      "nessun canale disponibile")
+                return None
+
+            lb_stream = sd.InputStream(
+                device=config.LOOPBACK_DEVICE,
+                samplerate=sr, channels=channels, dtype="int16",
+                blocksize=chunk,
+            )
+            lb_stream.start()
+            print(f"[AudioGate] Loopback attivo: [{config.LOOPBACK_DEVICE}] "
+                  f"{dev_info['name']} ({channels}ch)")
+            return lb_stream
+        except Exception as e:
+            print(f"[AudioGate] Loopback non disponibile: {e}")
+            print("[AudioGate] Usa --list-devices per trovare il dispositivo giusto")
+            return None
+
+    @staticmethod
+    def _read_loopback(lb_stream, chunk):
+        """Legge un chunk dal loopback e lo converte in mono int16."""
+        try:
+            data, overflowed = lb_stream.read(chunk)
+            if overflowed:
+                return None
+            audio = data.flatten() if data.ndim == 1 else data.mean(axis=1).astype(np.int16)
+            return audio
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    #  Vosk backend
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_wake_phrase(text):
+        """Verifica che il testo riconosciuto contenga la wake phrase completa.
+
+        Richiede entrambe le parole 'mara' E 'mouse'/'maus' per evitare
+        falsi positivi su parole singole o frasi della TV.
+        """
+        if not text or text == "[unk]":
+            return False
+        return "mara" in text and ("mouse" in text or "maus" in text)
+
     def _run_vosk(self, sd):
         """Wake word detection via Vosk (grammatica vincolata)."""
         try:
@@ -103,7 +226,7 @@ class AudioGate:
 
         # Audio capture
         sr = 16000
-        chunk = 4096  # ~256ms @ 16kHz, buon bilanciamento latenza/CPU
+        chunk = 4096  # ~256ms @ 16kHz
         buf_seconds = 3
         ring_buf = np.zeros(sr * buf_seconds, dtype=np.int16)
         ring_pos = 0
@@ -116,6 +239,9 @@ class AudioGate:
             print(f"[AudioGate] Errore apertura microfono: {e}")
             return
 
+        # Loopback per echo cancellation (opzionale)
+        lb_stream = self._open_loopback(sd, sr, chunk)
+
         self._ready = True
         print("[AudioGate] In ascolto (Vosk)...")
 
@@ -125,6 +251,13 @@ class AudioGate:
                 if overflowed:
                     continue
                 audio = data.flatten()
+
+                # Echo cancellation: sottrai audio TV dal microfono
+                if lb_stream is not None:
+                    lb_audio = self._read_loopback(lb_stream, chunk)
+                    if lb_audio is not None and len(lb_audio) == len(audio):
+                        audio = _spectral_subtract(audio, lb_audio,
+                                                   config.LOOPBACK_GAIN)
 
                 # Buffer circolare per speaker verification
                 end = ring_pos + len(audio)
@@ -136,20 +269,24 @@ class AudioGate:
                     ring_buf[:len(audio) - first] = audio[first:]
                 ring_pos = end % len(ring_buf)
 
+                # Wake word detection — SOLO su risultati completi
                 raw = audio.tobytes()
                 if rec.AcceptWaveform(raw):
                     result = json.loads(rec.Result())
                     text = result.get("text", "").strip().lower()
                 else:
+                    # Risultati parziali: aggiorna solo il punteggio diagnostica
                     partial = json.loads(rec.PartialResult())
-                    text = partial.get("partial", "").strip().lower()
+                    p = partial.get("partial", "").strip().lower()
+                    with self._lock:
+                        self._scores["wake"] = 1.0 if self._is_wake_phrase(p) else 0.0
+                    continue  # NON triggerare su risultati parziali
 
-                if not text or text == "[unk]":
+                if not self._is_wake_phrase(text):
                     with self._lock:
                         self._scores["wake"] = 0.0
                     continue
 
-                # Match: la wake word e' stata riconosciuta
                 with self._lock:
                     self._scores["wake"] = 1.0
                 print(f"[AudioGate] Wake word Vosk: '{text}'")
@@ -172,6 +309,13 @@ class AudioGate:
         finally:
             stream.stop()
             stream.close()
+            if lb_stream is not None:
+                lb_stream.stop()
+                lb_stream.close()
+
+    # ------------------------------------------------------------------
+    #  openWakeWord backend (usato solo se modello ONNX presente)
+    # ------------------------------------------------------------------
 
     def _run_openwakeword(self, sd, model_path):
         """Wake word detection via openWakeWord (modello ONNX custom)."""
@@ -203,6 +347,9 @@ class AudioGate:
             print(f"[AudioGate] Errore apertura microfono: {e}")
             return
 
+        # Loopback per echo cancellation (opzionale)
+        lb_stream = self._open_loopback(sd, sr, chunk)
+
         self._ready = True
         print("[AudioGate] In ascolto (openWakeWord)...")
 
@@ -212,6 +359,13 @@ class AudioGate:
                 if overflowed:
                     continue
                 audio = data.flatten()
+
+                # Echo cancellation
+                if lb_stream is not None:
+                    lb_audio = self._read_loopback(lb_stream, chunk)
+                    if lb_audio is not None and len(lb_audio) == len(audio):
+                        audio = _spectral_subtract(audio, lb_audio,
+                                                   config.LOOPBACK_GAIN)
 
                 # Buffer circolare per speaker verification
                 end = ring_pos + len(audio)
@@ -253,6 +407,13 @@ class AudioGate:
         finally:
             stream.stop()
             stream.close()
+            if lb_stream is not None:
+                lb_stream.stop()
+                lb_stream.close()
+
+    # ------------------------------------------------------------------
+    #  Speaker verification
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _load_speaker_model():
@@ -292,3 +453,7 @@ class AudioGate:
             np.linalg.norm(emb) * np.linalg.norm(ref_embedding) + 1e-8
         )
         return float(cos)
+
+
+if __name__ == "__main__":
+    list_devices()

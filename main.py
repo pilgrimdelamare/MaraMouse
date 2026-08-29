@@ -46,6 +46,8 @@ def parse_args():
                         help="Mostra scheletro mano e stato dita, NON muove il mouse")
     parser.add_argument("--no-audio", action="store_true",
                         help="Disabilita gate vocale (usa solo gesto telefono)")
+    parser.add_argument("--list-devices", action="store_true",
+                        help="Mostra dispositivi audio e esci (per configurare loopback)")
     return parser.parse_args()
 
 
@@ -57,6 +59,11 @@ def main():
         source = int(args.source)
     except ValueError:
         source = args.source
+
+    if args.list_devices:
+        from audio_gate import list_devices
+        list_devices()
+        return
 
     config.CURSOR_SENSITIVITY = args.sensitivity
 

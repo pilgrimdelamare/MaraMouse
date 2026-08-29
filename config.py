@@ -76,6 +76,17 @@ SPEAKER_THRESHOLD = 0.25
 # Frame di timeout nello stato ARMED prima di tornare a IDLE (~8s a 10fps)
 ARMED_TIMEOUT_FRAMES = 80
 
+# --- Echo cancellation (loopback audio TV) ---
+# Indice del dispositivo audio di uscita (TV/HDMI) da cui catturare il loopback.
+# None = disabilitato. Usa `python audio_gate.py` o `python main.py --list-devices`
+# per vedere i dispositivi disponibili e trovare l'uscita HDMI/TV.
+# Se hai VB-Audio Virtual Cable, usa l'indice del suo "CABLE Output" (input).
+LOOPBACK_DEVICE = None
+# Guadagno sottrazione spettrale: compensa l'attenuazione dell'audio TV nel
+# tragitto speaker->microfono. >1 = piu' aggressivo (rimuove piu' TV ma puo'
+# distorcere la voce durante audio TV forte). 1.0-2.0 e' il range tipico.
+LOOPBACK_GAIN = 1.5
+
 # --- Debounce generale ---
 # Frame minimi prima di cambiare stato nella macchina a stati
 STATE_CHANGE_DEBOUNCE = 4
