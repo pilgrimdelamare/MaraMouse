@@ -126,6 +126,10 @@ class AudioGate:
 
         try:
             import soundcard as sc
+            # Zittisce "data discontinuity in recording" che soundcard
+            # spamma ogni volta che il loopback ha un gap di silenzio.
+            import soundcard.mediafoundation as _scmf
+            _scmf.warnings = type("_W", (), {"warn": lambda *a, **k: None})()
         except ImportError:
             print("[AudioGate] pip install soundcard per echo cancellation")
             return None
