@@ -210,6 +210,131 @@ def open_dialog():
         row=row, column=0, columnspan=2, sticky="w", pady=(2, 5))
     row += 1
 
+    # === IMPRONTA VOCALE (opzionale) ===
+    ttk.Separator(main_frame, orient="horizontal").grid(
+        row=row, column=0, columnspan=2, sticky="ew", pady=10)
+    row += 1
+
+    _emb_path = os.path.join(os.path.dirname(__file__), "models",
+                             config.SPEAKER_EMBEDDING)
+    _has_emb = os.path.exists(_emb_path)
+    voice_status = "Registrata" if _has_emb else "Non registrata"
+    voice_color = "green" if _has_emb else "gray"
+
+    ttk.Label(main_frame, text="Impronta vocale (facoltativo)",
+              font=("", 10, "bold")).grid(
+        row=row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+    row += 1
+
+    voice_lbl = ttk.Label(main_frame, text=f"Stato: {voice_status}",
+                          foreground=voice_color)
+    voice_lbl.grid(row=row, column=0, sticky="w", pady=2)
+    row += 1
+
+    ttk.Label(main_frame, text="Registra la tua voce per riconoscere chi parla.\n"
+              "Richiede speechbrain+torch (~2GB). Facoltativo.",
+              foreground="gray").grid(
+        row=row, column=0, columnspan=2, sticky="w", pady=(0, 5))
+    row += 1
+
+    enroll_progress = ttk.Label(main_frame, text="", foreground="blue")
+    enroll_progress.grid(row=row, column=0, columnspan=2, sticky="w")
+    row += 1
+
+    def _do_enroll():
+        """Registra impronta vocale in background (5 campioni da 3s)."""
+        import threading
+
+        def _run():
+            try:
+                import sounddevice as sd
+            except ImportError:
+                enroll_progress.config(text="Errore: pip install sounddevice",
+                                       foreground="red")
+                return
+            try:
+                import torch  # noqa: F401
+                try:
+                    from speechbrain.inference.speaker import EncoderClassifier
+                except ImportError:
+                    from speechbrain.pretrained import EncoderClassifier
+            except ImportError:
+                enroll_progress.config(
+                    text="Errore: pip install speechbrain torch",
+                    foreground="red")
+                return
+
+            import numpy as np
+            models_dir = os.path.join(os.path.dirname(__file__), "models")
+            os.makedirs(models_dir, exist_ok=True)
+
+            enroll_progress.config(text="Caricamento modello...",
+                                   foreground="blue")
+            try:
+                model = EncoderClassifier.from_hparams(
+                    source="speechbrain/spkrec-ecapa-voxceleb",
+                    savedir=os.path.join(models_dir, "spkrec-ecapa"),
+                )
+            except Exception as e:
+                enroll_progress.config(text=f"Errore modello: {e}",
+                                       foreground="red")
+                return
+
+            sr = 16000
+            rec_secs = 3
+            n_samples = 5
+            embeddings = []
+
+            for i in range(n_samples):
+                enroll_progress.config(
+                    text=f"[{i+1}/{n_samples}] Di' 'Maramouse' ora! "
+                         f"({rec_secs}s)",
+                    foreground="blue")
+                # Piccola pausa per leggere
+                import time
+                time.sleep(0.5)
+
+                audio = sd.rec(int(sr * rec_secs), samplerate=sr,
+                               channels=1, dtype="float32")
+                sd.wait()
+
+                rms = np.sqrt(np.mean(audio ** 2))
+                if rms < 0.005:
+                    enroll_progress.config(
+                        text=f"[{i+1}] Troppo basso (RMS={rms:.4f}), "
+                             "riprova piu' forte",
+                        foreground="orange")
+                    time.sleep(1.5)
+                    continue
+
+                waveform = torch.from_numpy(audio.T)
+                emb = model.encode_batch(waveform).squeeze().cpu().numpy()
+                embeddings.append(emb)
+
+            if len(embeddings) < 2:
+                enroll_progress.config(
+                    text="Troppi pochi campioni validi, riprova.",
+                    foreground="red")
+                return
+
+            avg = np.mean(embeddings, axis=0)
+            avg = avg / (np.linalg.norm(avg) + 1e-8)
+            emb_path = os.path.join(models_dir, config.SPEAKER_EMBEDDING)
+            np.save(emb_path, avg)
+
+            enroll_progress.config(
+                text=f"Fatto! {len(embeddings)} campioni salvati. "
+                     "Riavvia MaraMouse.",
+                foreground="green")
+            voice_lbl.config(text="Stato: Registrata", foreground="green")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    ttk.Button(main_frame, text="Registra voce",
+               command=_do_enroll).grid(
+        row=row, column=0, sticky="w", pady=2)
+    row += 1
+
     # === PULSANTI ===
     ttk.Separator(main_frame, orient="horizontal").grid(
         row=row, column=0, columnspan=2, sticky="ew", pady=10)
