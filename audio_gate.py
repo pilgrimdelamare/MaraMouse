@@ -242,13 +242,15 @@ class AudioGate:
         if lb_stream is not None:
             lb_rec = vosk.KaldiRecognizer(model, 16000, grammar)
             lb_rec.SetWords(False)
-            # Buffer circolare loopback per controllare gli ultimi ~3s
-            lb_ring = np.zeros(sr * 3, dtype=np.int16)
-            lb_ring_pos = 0
             print("[AudioGate] Echo cancellation: Vosk su loopback attivo")
 
         self._ready = True
         print("[AudioGate] In ascolto (Vosk)...")
+
+        # Flush periodico: ogni ~10s svuota il buffer Vosk per evitare
+        # che accumuli minuti di silenzio e smetta di rispondere.
+        flush_interval = int(10 * sr / chunk)  # chunk ogni ~10s
+        chunks_since_result = 0
 
         try:
             while not self._stop_event.is_set():
@@ -261,17 +263,6 @@ class AudioGate:
                 if lb_stream is not None:
                     lb_audio = self._read_loopback(lb_stream, chunk)
                     if lb_audio is not None:
-                        # Accumula nel ring buffer loopback
-                        lb_end = lb_ring_pos + len(lb_audio)
-                        if lb_end <= len(lb_ring):
-                            lb_ring[lb_ring_pos:lb_end] = lb_audio
-                        else:
-                            first = len(lb_ring) - lb_ring_pos
-                            lb_ring[lb_ring_pos:] = lb_audio[:first]
-                            lb_ring[:len(lb_audio) - first] = lb_audio[first:]
-                        lb_ring_pos = lb_end % len(lb_ring)
-                        # Feed al recognizer loopback (non ci interessa il
-                        # risultato continuo, lo controlleremo on-demand)
                         lb_rec.AcceptWaveform(lb_audio.tobytes())
 
                 # Buffer circolare per speaker verification
@@ -284,18 +275,28 @@ class AudioGate:
                     ring_buf[:len(audio) - first] = audio[first:]
                 ring_pos = end % len(ring_buf)
 
-                # Wake word detection — SOLO su risultati completi
+                # Wake word detection
                 raw = audio.tobytes()
+                text = None
+                chunks_since_result += 1
+
                 if rec.AcceptWaveform(raw):
                     result = json.loads(rec.Result())
                     text = result.get("text", "").strip().lower()
+                    chunks_since_result = 0
+                elif chunks_since_result >= flush_interval:
+                    # Flush periodico: forza il risultato per svuotare
+                    # il buffer interno di Vosk dopo silenzio prolungato
+                    flushed = json.loads(rec.FinalResult())
+                    text = flushed.get("text", "").strip().lower()
+                    chunks_since_result = 0
                 else:
-                    # Risultati parziali: aggiorna solo il punteggio diagnostica
+                    # Risultati parziali: aggiorna solo diagnostica
                     partial = json.loads(rec.PartialResult())
                     p = partial.get("partial", "").strip().lower()
                     with self._lock:
                         self._scores["wake"] = 1.0 if self._is_wake_phrase(p) else 0.0
-                    continue  # NON triggerare su risultati parziali
+                    continue
 
                 if not self._is_wake_phrase(text):
                     with self._lock:
