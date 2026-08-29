@@ -232,9 +232,12 @@ class AudioGate:
         ring_pos = 0
 
         try:
-            stream = sd.InputStream(samplerate=sr, channels=1, dtype="int16",
-                                    blocksize=chunk)
+            mic_dev = config.MIC_DEVICE
+            stream = sd.InputStream(device=mic_dev, samplerate=sr, channels=1,
+                                    dtype="int16", blocksize=chunk)
             stream.start()
+            mic_name = sd.query_devices(mic_dev)["name"] if mic_dev is not None else "default"
+            print(f"[AudioGate] Microfono: {mic_name}")
         except Exception as e:
             print(f"[AudioGate] Errore apertura microfono: {e}")
             return
@@ -340,8 +343,9 @@ class AudioGate:
         ring_pos = 0
 
         try:
-            stream = sd.InputStream(samplerate=sr, channels=1, dtype="int16",
-                                    blocksize=chunk)
+            mic_dev = config.MIC_DEVICE
+            stream = sd.InputStream(device=mic_dev, samplerate=sr, channels=1,
+                                    dtype="int16", blocksize=chunk)
             stream.start()
         except Exception as e:
             print(f"[AudioGate] Errore apertura microfono: {e}")

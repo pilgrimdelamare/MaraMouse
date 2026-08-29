@@ -19,6 +19,7 @@ import sys
 import cv2
 
 import config
+import settings
 from camera import Camera
 from hand_tracker import HandTracker
 from gesture_classifier import classify, Gesture, _finger_states
@@ -65,6 +66,9 @@ def main():
         list_devices()
         return
 
+    # Carica impostazioni salvate (sovrascrive config.py)
+    settings.load_and_apply()
+
     config.CURSOR_SENSITIVITY = args.sensitivity
 
     # Inizializza componenti
@@ -91,7 +95,7 @@ def main():
 
     debug = args.debug
 
-    print("MaraMouse avviato. Premi 'q' per uscire, '1/2/3' per cambiare camera.")
+    print("MaraMouse avviato. 'q'=esci, 's'=impostazioni, '1/2/3'=camera.")
     print(f"Sorgente: {source} | Sensibilita: {config.CURSOR_SENSITIVITY}")
     if use_audio:
         print("Gate vocale: ATTIVO (di' 'Maramouse' per armare)")
@@ -217,6 +221,8 @@ def main():
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
+        elif key == ord('s'):
+            settings.open_dialog()
         elif key == ord('1'):
             cam.switch(0)
             print("Camera: webcam locale")

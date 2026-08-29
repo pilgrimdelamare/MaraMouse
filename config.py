@@ -4,6 +4,7 @@
 # 0 = webcam integrata, oppure URL MJPEG per IP Webcam Android
 # Esempio: "http://192.168.1.100:8080/video"
 CAMERA_SOURCE = 0
+MIC_DEVICE = None  # None = microfono predefinito, int = indice dispositivo
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
