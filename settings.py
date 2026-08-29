@@ -182,28 +182,24 @@ def open_dialog():
         row=row, column=0, columnspan=2, sticky="w", pady=(0, 5))
     row += 1
 
-    # Per il loopback: mostra sia output (HDMI) che input (virtual cable)
+    # Per il loopback: enumera speaker via soundcard (supporta WASAPI loopback)
     lb_labels = ["Disabilitato"]
-    lb_indices = [None]
-    # Prima gli output (HDMI reali)
-    for i, n in out_devices:
-        lb_labels.append(f"[{i}] {n}  (uscita)")
-        lb_indices.append(i)
-    # Poi gli input che potrebbero essere loopback (virtual cable, stereo mix)
-    for i, n in mic_devices:
-        low = n.lower()
-        if any(kw in low for kw in ("cable", "loopback", "stereo mix", "mix",
-                                     "what u hear", "virtual")):
-            lb_labels.append(f"[{i}] {n}  (virtual)")
-            lb_indices.append(i)
+    lb_names = [None]  # salva il nome dello speaker (stringa) per soundcard
+    try:
+        import soundcard as sc
+        for spk in sc.all_speakers():
+            lb_labels.append(spk.name)
+            lb_names.append(spk.name)
+    except ImportError:
+        pass  # soundcard non installato, dropdown vuoto
 
     lb_var = tk.StringVar()
     lb_combo = ttk.Combobox(main_frame, textvariable=lb_var, state="readonly",
                             values=lb_labels, width=45)
     lb_combo.grid(row=row, column=0, columnspan=2, sticky="ew", pady=2)
     cur_lb = current.get("loopback_device", config.LOOPBACK_DEVICE)
-    if cur_lb in lb_indices:
-        lb_combo.current(lb_indices.index(cur_lb))
+    if cur_lb in lb_names:
+        lb_combo.current(lb_names.index(cur_lb))
     else:
         lb_combo.current(0)
     row += 1
@@ -230,7 +226,7 @@ def open_dialog():
         new_settings = {
             "camera_source": cam_values[cam_idx] if cam_idx >= 0 else 0,
             "mic_device": mic_indices[mic_idx] if mic_idx >= 0 else None,
-            "loopback_device": lb_indices[lb_idx] if lb_idx >= 0 else None,
+            "loopback_device": lb_names[lb_idx] if lb_idx >= 0 else None,
         }
         _save(new_settings)
 

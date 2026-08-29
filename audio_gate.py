@@ -132,52 +132,52 @@ class AudioGate:
 
     @staticmethod
     def _open_loopback(sd, sr, chunk):
-        """Apre lo stream di loopback per catturare l'audio del sistema (TV).
+        """Apre il loopback WASAPI per catturare l'audio del sistema (TV).
 
-        Usa WASAPI su Windows: apre il dispositivo di output come input
-        (loopback capture). Richiede config.LOOPBACK_DEVICE impostato.
+        Usa la libreria soundcard che supporta WASAPI loopback nativamente.
+        config.LOOPBACK_DEVICE e' il nome (stringa) dello speaker da catturare.
         """
-        if config.LOOPBACK_DEVICE is None:
+        if not config.LOOPBACK_DEVICE:
             return None
 
         try:
-            dev_info = sd.query_devices(config.LOOPBACK_DEVICE)
-            # Il dispositivo puo' essere un output (loopback) o un input (virtual cable)
-            ch_in = dev_info['max_input_channels']
-            ch_out = dev_info['max_output_channels']
-            if ch_in > 0:
-                # E' un dispositivo di input (es. CABLE Output, virtual cable)
-                channels = min(ch_in, 2)
-            elif ch_out > 0:
-                # E' un dispositivo di output — prova ad aprirlo come loopback
-                channels = min(ch_out, 2)
-            else:
-                print(f"[AudioGate] Loopback device {config.LOOPBACK_DEVICE}: "
-                      "nessun canale disponibile")
-                return None
+            import soundcard as sc
+        except ImportError:
+            print("[AudioGate] pip install soundcard per echo cancellation")
+            return None
 
-            lb_stream = sd.InputStream(
-                device=config.LOOPBACK_DEVICE,
-                samplerate=sr, channels=channels, dtype="int16",
-                blocksize=chunk,
-            )
-            lb_stream.start()
-            print(f"[AudioGate] Loopback attivo: [{config.LOOPBACK_DEVICE}] "
-                  f"{dev_info['name']} ({channels}ch)")
-            return lb_stream
+        # Trova lo speaker per nome
+        target = config.LOOPBACK_DEVICE
+        speaker = None
+        for s in sc.all_speakers():
+            if target.lower() in s.name.lower():
+                speaker = s
+                break
+
+        if speaker is None:
+            print(f"[AudioGate] Speaker '{target}' non trovato")
+            print("[AudioGate] Premi 's' per aprire le impostazioni")
+            return None
+
+        try:
+            loopback_mic = sc.get_microphone(id=str(speaker.id),
+                                             include_loopback=True)
+            recorder = loopback_mic.recorder(samplerate=sr, channels=1,
+                                             blocksize=chunk)
+            recorder.__enter__()
+            print(f"[AudioGate] Loopback WASAPI: {speaker.name}")
+            return recorder
         except Exception as e:
             print(f"[AudioGate] Loopback non disponibile: {e}")
-            print("[AudioGate] Usa --list-devices per trovare il dispositivo giusto")
             return None
 
     @staticmethod
-    def _read_loopback(lb_stream, chunk):
-        """Legge un chunk dal loopback e lo converte in mono int16."""
+    def _read_loopback(recorder, chunk):
+        """Legge un chunk dal loopback soundcard e lo converte in int16."""
         try:
-            data, overflowed = lb_stream.read(chunk)
-            if overflowed:
-                return None
-            audio = data.flatten() if data.ndim == 1 else data.mean(axis=1).astype(np.int16)
+            # soundcard restituisce float32 in [-1, 1]
+            data = recorder.record(numframes=chunk)
+            audio = (data[:, 0] * 32768).clip(-32768, 32767).astype(np.int16)
             return audio
         except Exception:
             return None
@@ -313,8 +313,7 @@ class AudioGate:
             stream.stop()
             stream.close()
             if lb_stream is not None:
-                lb_stream.stop()
-                lb_stream.close()
+                lb_stream.__exit__(None, None, None)
 
     # ------------------------------------------------------------------
     #  openWakeWord backend (usato solo se modello ONNX presente)
@@ -412,8 +411,7 @@ class AudioGate:
             stream.stop()
             stream.close()
             if lb_stream is not None:
-                lb_stream.stop()
-                lb_stream.close()
+                lb_stream.__exit__(None, None, None)
 
     # ------------------------------------------------------------------
     #  Speaker verification

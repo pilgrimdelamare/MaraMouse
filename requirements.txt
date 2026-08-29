@@ -7,6 +7,7 @@ pynput>=1.7.6
 numpy>=1.24.0
 # --- Audio gate (wake word + speaker verification) ---
 sounddevice>=0.4.6
+soundcard>=0.4.0
 vosk>=0.3.45
 # openwakeword e' opzionale: se presente un modello ONNX custom in models/,
 # viene usato al posto di Vosk. Altrimenti Vosk basta da solo.
