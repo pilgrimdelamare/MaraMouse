@@ -78,15 +78,13 @@ SPEAKER_THRESHOLD = 0.25
 ARMED_TIMEOUT_FRAMES = 80
 
 # --- Echo cancellation (loopback audio TV) ---
-# Indice del dispositivo audio di uscita (TV/HDMI) da cui catturare il loopback.
-# None = disabilitato. Usa `python audio_gate.py` o `python main.py --list-devices`
-# per vedere i dispositivi disponibili e trovare l'uscita HDMI/TV.
-# Se hai VB-Audio Virtual Cable, usa l'indice del suo "CABLE Output" (input).
+# Nome dello speaker (stringa) da cui catturare il loopback WASAPI.
+# None = disabilitato. Configura da Impostazioni ('s') nella finestra MaraMouse.
 LOOPBACK_DEVICE = None
-# Guadagno sottrazione spettrale: compensa l'attenuazione dell'audio TV nel
-# tragitto speaker->microfono. >1 = piu' aggressivo (rimuove piu' TV ma puo'
-# distorcere la voce durante audio TV forte). 1.0-2.0 e' il range tipico.
-LOOPBACK_GAIN = 1.5
+# Soglia RMS energy sul loopback: se l'audio TV supera questa soglia quando
+# scatta il wake word, il trigger viene rifiutato (era la TV, non l'utente).
+# Valori tipici: 200-500. Piu' basso = piu' aggressivo nel rifiutare.
+LOOPBACK_ENERGY_THRESHOLD = 300
 
 # --- Debounce generale ---
 # Frame minimi prima di cambiare stato nella macchina a stati

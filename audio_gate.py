@@ -1,14 +1,15 @@
 """Gate vocale MaraMouse: wake word + speaker verification + echo cancellation.
 
-Pipeline: microfono -> sottrazione spettrale audio TV (loopback HDMI) ->
-          Vosk (grammatica vincolata) -> speaker verification -> ARMED.
+Pipeline: microfono -> Vosk (grammatica vincolata) -> energy gate loopback
+          -> speaker verification -> ARMED.
 
 Vosk con grammatica ["mara mouse", "[unk]"] funziona come un keyword spotter:
 riconosce solo la wake word o rumore, con CPU bassissima e senza training.
 Se e' presente un modello openWakeWord custom (maramouse.onnx), usa quello.
 
-Echo cancellation: cattura l'audio di sistema (TV via HDMI) e lo sottrae
-dal segnale del microfono per evitare falsi positivi dalla TV.
+Echo cancellation: cattura l'audio di sistema (TV via HDMI) via loopback WASAPI
+e usa un energy gate — se la TV stava suonando quando scatta il wake word,
+il trigger viene rifiutato (probabilmente era la TV, non l'utente).
 
 Gira in un thread separato, non blocca il loop video.
 """
@@ -16,10 +17,14 @@ Gira in un thread separato, non blocca il loop video.
 import json
 import os
 import threading
+import warnings
 
 import numpy as np
 
 import config
+
+# Silenzia i warning di soundcard (data discontinuity)
+warnings.filterwarnings("ignore", message="data discontinuity", category=RuntimeWarning)
 
 _MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
 
@@ -53,24 +58,9 @@ def list_devices():
     print("Il sistema ne catturera' il loopback per sottrarlo dal microfono.")
 
 
-def _spectral_subtract(mic, ref, gain=1.5):
-    """Sottrae lo spettro del riferimento (audio TV) dal microfono.
-
-    Sottrazione spettrale semplice: rimuove le frequenze della TV dal segnale
-    del microfono, preservando la voce dell'utente (che non e' nel loopback).
-    Il gain compensa l'attenuazione dell'audio TV nel tragitto speaker->mic.
-    """
-    mic_f = np.fft.rfft(mic.astype(np.float32))
-    ref_f = np.fft.rfft(ref.astype(np.float32))
-
-    mic_mag = np.abs(mic_f)
-    ref_mag = np.abs(ref_f) * gain
-
-    # Floor: mantieni almeno il 5% del segnale originale per evitare artefatti
-    clean_mag = np.maximum(mic_mag - ref_mag, mic_mag * 0.05)
-    clean_f = clean_mag * np.exp(1j * np.angle(mic_f))
-
-    return np.fft.irfft(clean_f, n=len(mic)).clip(-32768, 32767).astype(np.int16)
+def _rms(audio_int16):
+    """RMS energy di un buffer int16."""
+    return np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2))
 
 
 class AudioGate:
@@ -248,6 +238,9 @@ class AudioGate:
 
         # Loopback per echo cancellation (opzionale)
         lb_stream = self._open_loopback(sd, sr, chunk)
+        # Energy gate: RMS media del loopback negli ultimi N chunk
+        lb_rms_history = []
+        lb_history_len = 8  # ~2s di storia a 256ms/chunk
 
         self._ready = True
         print("[AudioGate] In ascolto (Vosk)...")
@@ -259,12 +252,13 @@ class AudioGate:
                     continue
                 audio = data.flatten()
 
-                # Echo cancellation: sottrai audio TV dal microfono
+                # Leggi loopback e aggiorna energy history
                 if lb_stream is not None:
                     lb_audio = self._read_loopback(lb_stream, chunk)
-                    if lb_audio is not None and len(lb_audio) == len(audio):
-                        audio = _spectral_subtract(audio, lb_audio,
-                                                   config.LOOPBACK_GAIN)
+                    if lb_audio is not None:
+                        lb_rms_history.append(_rms(lb_audio))
+                        if len(lb_rms_history) > lb_history_len:
+                            lb_rms_history.pop(0)
 
                 # Buffer circolare per speaker verification
                 end = ring_pos + len(audio)
@@ -296,6 +290,15 @@ class AudioGate:
 
                 with self._lock:
                     self._scores["wake"] = 1.0
+
+                # Energy gate: se la TV stava suonando, rifiuta il trigger
+                if lb_rms_history:
+                    avg_rms = np.mean(lb_rms_history)
+                    if avg_rms > config.LOOPBACK_ENERGY_THRESHOLD:
+                        print(f"[AudioGate] Wake word '{text}' RIFIUTATA "
+                              f"(TV attiva, RMS={avg_rms:.0f})")
+                        continue
+
                 print(f"[AudioGate] Wake word Vosk: '{text}'")
 
                 # Speaker verification
@@ -356,6 +359,8 @@ class AudioGate:
 
         # Loopback per echo cancellation (opzionale)
         lb_stream = self._open_loopback(sd, sr, chunk)
+        lb_rms_history = []
+        lb_history_len = 25  # ~2s di storia a 80ms/chunk
 
         self._ready = True
         print("[AudioGate] In ascolto (openWakeWord)...")
@@ -367,12 +372,13 @@ class AudioGate:
                     continue
                 audio = data.flatten()
 
-                # Echo cancellation
+                # Leggi loopback e aggiorna energy history
                 if lb_stream is not None:
                     lb_audio = self._read_loopback(lb_stream, chunk)
-                    if lb_audio is not None and len(lb_audio) == len(audio):
-                        audio = _spectral_subtract(audio, lb_audio,
-                                                   config.LOOPBACK_GAIN)
+                    if lb_audio is not None:
+                        lb_rms_history.append(_rms(lb_audio))
+                        if len(lb_rms_history) > lb_history_len:
+                            lb_rms_history.pop(0)
 
                 # Buffer circolare per speaker verification
                 end = ring_pos + len(audio)
@@ -392,6 +398,15 @@ class AudioGate:
                         self._scores["wake"] = float(score)
 
                     if score >= config.WAKE_WORD_THRESHOLD:
+                        # Energy gate
+                        if lb_rms_history:
+                            avg_rms = np.mean(lb_rms_history)
+                            if avg_rms > config.LOOPBACK_ENERGY_THRESHOLD:
+                                print(f"[AudioGate] Wake '{name}' RIFIUTATA "
+                                      f"(TV attiva, RMS={avg_rms:.0f})")
+                                oww.reset()
+                                break
+
                         print(f"[AudioGate] Wake word '{name}': {score:.3f}")
                         oww.reset()
 
