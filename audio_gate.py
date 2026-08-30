@@ -306,12 +306,15 @@ class AudioGate:
 
                 _diag_chunks += 1
 
-                # Report diagnostico ogni 30s
+                # Report diagnostico ogni 30s (contatori resettati)
                 _now = time.time()
                 if _now - _diag_last >= 30:
-                    print(f"[AudioGate] heartbeat: {_diag_chunks} chunks, "
+                    print(f"[AudioGate] heartbeat: {_diag_chunks} chunks/30s, "
                           f"{_diag_timeouts} timeouts, "
                           f"{_diag_flushes} flushes")
+                    _diag_chunks = 0
+                    _diag_timeouts = 0
+                    _diag_flushes = 0
                     _diag_last = _now
 
                 # Leggi loopback (non bloccante) e alimenta il secondo recognizer
