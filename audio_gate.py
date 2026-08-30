@@ -17,7 +17,9 @@ Gira in un thread separato, non blocca il loop video.
 
 import json
 import os
+import queue
 import threading
+import time
 
 import numpy as np
 
@@ -239,17 +241,26 @@ class AudioGate:
         # Speaker verification (opzionale)
         speaker_model, speaker_ref = self._load_speaker_model()
 
-        # Audio capture
+        # Audio capture — callback + queue (piu' robusto di stream.read()
+        # contro il power management del mic su laptop)
         sr = 16000
         chunk = 4096  # ~256ms @ 16kHz
         buf_seconds = 3
         ring_buf = np.zeros(sr * buf_seconds, dtype=np.int16)
         ring_pos = 0
 
+        audio_q = queue.Queue(maxsize=50)
+
+        def _audio_callback(indata, frames, time_info, status):
+            if status:
+                pass  # overflow/underflow gestiti sotto
+            audio_q.put(indata[:, 0].copy())
+
         try:
             mic_dev = config.MIC_DEVICE
             stream = sd.InputStream(device=mic_dev, samplerate=sr, channels=1,
-                                    dtype="int16", blocksize=chunk)
+                                    dtype="int16", blocksize=chunk,
+                                    callback=_audio_callback)
             stream.start()
             mic_name = sd.query_devices(mic_dev)["name"] if mic_dev is not None else "default"
             print(f"[AudioGate] Microfono: {mic_name}")
@@ -268,17 +279,40 @@ class AudioGate:
         self._ready = True
         print("[AudioGate] In ascolto (Vosk)...")
 
-        # Flush periodico: ogni ~10s svuota il buffer Vosk per evitare
+        # Flush periodico: ogni ~10s ricrea il recognizer Vosk per evitare
         # che accumuli minuti di silenzio e smetta di rispondere.
         flush_interval = int(10 * sr / chunk)  # chunk ogni ~10s
         chunks_since_result = 0
 
+        # Diagnostica: contatori per debug
+        _diag_chunks = 0
+        _diag_timeouts = 0
+        _diag_flushes = 0
+        _diag_last = time.time()
+
         try:
             while not self._stop_event.is_set():
-                data, overflowed = stream.read(chunk)
-                if overflowed:
+                # Leggi dalla coda con timeout: se il mic non produce audio
+                # per 2s, logga e riprova (non blocca mai il loop per sempre)
+                try:
+                    audio = audio_q.get(timeout=2.0)
+                except queue.Empty:
+                    _diag_timeouts += 1
+                    # Ogni 5 timeout (~10s) logga un warning
+                    if _diag_timeouts % 5 == 0:
+                        print(f"[AudioGate] WARN: mic silente "
+                              f"({_diag_timeouts} timeout)")
                     continue
-                audio = data.flatten()
+
+                _diag_chunks += 1
+
+                # Report diagnostico ogni 30s
+                _now = time.time()
+                if _now - _diag_last >= 30:
+                    print(f"[AudioGate] heartbeat: {_diag_chunks} chunks, "
+                          f"{_diag_timeouts} timeouts, "
+                          f"{_diag_flushes} flushes")
+                    _diag_last = _now
 
                 # Leggi loopback (non bloccante) e alimenta il secondo recognizer
                 if lb_reader is not None:
@@ -306,11 +340,14 @@ class AudioGate:
                     text = result.get("text", "").strip().lower()
                     chunks_since_result = 0
                 elif chunks_since_result >= flush_interval:
-                    # Flush periodico: forza il risultato per svuotare
-                    # il buffer interno di Vosk dopo silenzio prolungato
-                    flushed = json.loads(rec.FinalResult())
-                    text = flushed.get("text", "").strip().lower()
+                    # Flush periodico: forza il risultato e RICREA il
+                    # recognizer da zero per garantire stato pulito
+                    rec.FinalResult()  # scarta il contenuto
+                    rec = vosk.KaldiRecognizer(model, 16000, grammar)
+                    rec.SetWords(False)
                     chunks_since_result = 0
+                    _diag_flushes += 1
+                    continue
                 else:
                     # Risultati parziali: aggiorna solo diagnostica
                     partial = json.loads(rec.PartialResult())
