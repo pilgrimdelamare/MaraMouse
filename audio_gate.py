@@ -252,9 +252,10 @@ class AudioGate:
         audio_q = queue.Queue(maxsize=50)
 
         def _audio_callback(indata, frames, time_info, status):
-            if status:
-                pass  # overflow/underflow gestiti sotto
-            audio_q.put(indata[:, 0].copy())
+            try:
+                audio_q.put_nowait(indata[:, 0].copy())
+            except queue.Full:
+                pass  # drop: il consumer e' in ritardo
 
         try:
             mic_dev = config.MIC_DEVICE
@@ -283,6 +284,7 @@ class AudioGate:
         # che accumuli minuti di silenzio e smetta di rispondere.
         flush_interval = int(10 * sr / chunk)  # chunk ogni ~10s
         chunks_since_result = 0
+        lb_chunks_since_flush = 0
 
         # Diagnostica: contatori per debug
         _diag_chunks = 0
@@ -318,10 +320,18 @@ class AudioGate:
                     _diag_last = _now
 
                 # Leggi loopback (non bloccante) e alimenta il secondo recognizer
-                if lb_reader is not None:
+                if lb_reader is not None and lb_rec is not None:
                     lb_audio = lb_reader.get_audio()
                     if lb_audio is not None:
                         lb_rec.AcceptWaveform(lb_audio.tobytes())
+                        lb_chunks_since_flush += 1
+                    # Flush periodico del loopback Vosk: se non viene resettato
+                    # il suo stato interno cresce e rallenta tutto il loop
+                    if lb_chunks_since_flush >= flush_interval:
+                        lb_rec.FinalResult()
+                        lb_rec = vosk.KaldiRecognizer(model, 16000, grammar)
+                        lb_rec.SetWords(False)
+                        lb_chunks_since_flush = 0
 
                 # Buffer circolare per speaker verification
                 end = ring_pos + len(audio)
@@ -375,6 +385,7 @@ class AudioGate:
                     # Reset per la prossima volta
                     lb_rec = vosk.KaldiRecognizer(model, 16000, grammar)
                     lb_rec.SetWords(False)
+                    lb_chunks_since_flush = 0
                     if self._is_wake_phrase(lb_text):
                         print(f"[AudioGate] '{text}' RIFIUTATA "
                               f"(anche il loopback dice '{lb_text}')")
